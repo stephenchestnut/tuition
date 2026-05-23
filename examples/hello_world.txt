@@ -1,0 +1,5 @@
+# A short tuition hello world presentation
+printf '\033[1;36mHello, world!\033[0m\n\nWelcome to tuition.\n'
+printf 'Each non-comment line is a shell command.\n\nThis is slide 2.\n'
+printf 'Use l/space for next, h for previous, j/k to scroll, q to quit.\n'
+printf '\033[1;32mDone!\033[0m\nThanks for trying tuition.\n'
