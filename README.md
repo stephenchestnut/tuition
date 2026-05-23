@@ -127,8 +127,17 @@ tuition --aliases './aliases' slides.txt
 
 ## Development
 
+See [docs/architecture.md](docs/architecture.md) for implementation details.
+
 ```sh
 cargo fmt
-cargo clippy --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+```
+
+Local coverage:
+
+```sh
+cargo install cargo-llvm-cov
+cargo llvm-cov --all-targets --all-features
 ```
