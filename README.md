@@ -30,6 +30,7 @@ Use `l`, right arrow, or space to advance; use `h` or left arrow to go back; pre
 
 ```sh
 cargo build --release
+cargo install --path .
 ```
 
 The binary will be at:
