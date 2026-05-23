@@ -7,7 +7,5 @@ description = "A tiny command-driven terminal slide presenter"
 
 [dependencies]
 anyhow = "1"
-ansi-to-tui = "7"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
-ratatui = "0.29"

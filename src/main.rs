@@ -1,26 +1,16 @@
 use std::{
     env, fs,
-    io::{self, Stdout},
+    io::{self, Write},
     path::{Path, PathBuf},
     process::Command,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
-use ansi_to_tui::IntoText;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    Frame, Terminal,
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
 
 #[derive(Debug, Parser)]
@@ -41,33 +31,13 @@ struct SlideCommand {
 #[derive(Debug, Clone)]
 struct ActiveSlide {
     index: usize,
-    output: SlideOutput,
-    scroll: u16,
-}
-
-#[derive(Debug, Clone)]
-struct SlideOutput {
-    success: bool,
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
-    duration: Duration,
 }
 
 #[derive(Debug)]
 struct App {
     commands: Vec<SlideCommand>,
     active: ActiveSlide,
-    mode: Mode,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Presenting,
-    ConfirmQuit,
-}
-
-type Tui = Terminal<CrosstermBackend<Stdout>>;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -76,20 +46,13 @@ fn main() -> Result<()> {
         return Err(anyhow!("no slide commands found"));
     }
 
-    let first_output = run_slide_command(&commands[0]);
     let mut app = App {
         commands,
-        active: ActiveSlide {
-            index: 0,
-            output: first_output,
-            scroll: 0,
-        },
-        mode: Mode::Presenting,
+        active: ActiveSlide { index: 0 },
     };
 
-    let mut terminal = setup_tui()?;
-    let result = run_app(&mut terminal, &mut app);
-    let cleanup_result = cleanup_tui(&mut terminal);
+    let result = run_app(&mut app);
+    let cleanup_result = cleanup_terminal();
 
     result.and(cleanup_result)
 }
@@ -118,133 +81,158 @@ fn parse_slide_files(files: &[PathBuf]) -> Result<Vec<SlideCommand>> {
     Ok(commands)
 }
 
-fn run_slide_command(slide: &SlideCommand) -> SlideOutput {
-    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let started = Instant::now();
-    let output = Command::new(shell).arg("-lc").arg(&slide.command).output();
-    let duration = started.elapsed();
+fn run_app(app: &mut App) -> Result<()> {
+    render_active_slide(app)?;
 
-    match output {
-        Ok(output) => SlideOutput {
-            success: output.status.success(),
-            code: output.status.code(),
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            duration,
-        },
-        Err(err) => SlideOutput {
-            success: false,
-            code: None,
-            stdout: String::new(),
-            stderr: format!("failed to execute command: {err}"),
-            duration,
-        },
-    }
-}
-
-fn setup_tui() -> Result<Tui> {
-    enable_raw_mode().context("failed to enable raw mode")?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen).context("failed to enter alternate screen")?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).context("failed to create terminal")?;
-    terminal.clear().context("failed to clear terminal")?;
-    Ok(terminal)
-}
-
-fn cleanup_tui(terminal: &mut Tui) -> Result<()> {
-    disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)
-        .context("failed to leave alternate screen")?;
-    terminal.show_cursor().context("failed to show cursor")?;
-    Ok(())
-}
-
-fn run_app(terminal: &mut Tui, app: &mut App) -> Result<()> {
     loop {
-        terminal.draw(|frame| render(frame, app))?;
+        enable_raw_mode().context("failed to enable raw mode")?;
+        let key = read_key();
+        disable_raw_mode().context("failed to disable raw mode")?;
+        let key = key?;
 
-        if let Event::Key(key) = event::read().context("failed to read terminal event")? {
-            if handle_key(terminal, app, key)? {
-                return Ok(());
-            }
+        if handle_key(app, key)? {
+            return Ok(());
         }
     }
 }
 
-fn handle_key(terminal: &mut Tui, app: &mut App, key: KeyEvent) -> Result<bool> {
+fn read_key() -> Result<KeyEvent> {
+    loop {
+        if let Event::Key(key) = event::read().context("failed to read terminal event")? {
+            return Ok(key);
+        }
+    }
+}
+
+fn handle_key(app: &mut App, key: KeyEvent) -> Result<bool> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         return Ok(true);
     }
 
-    match app.mode {
-        Mode::Presenting => handle_presenting_key(terminal, app, key),
-        Mode::ConfirmQuit => Ok(handle_confirm_quit_key(app, key)),
-    }
-}
-
-fn handle_presenting_key(terminal: &mut Tui, app: &mut App, key: KeyEvent) -> Result<bool> {
     match key.code {
-        KeyCode::Char('l') | KeyCode::Right | KeyCode::Char(' ') => next_slide(app),
-        KeyCode::Char('h') | KeyCode::Left => previous_slide(app),
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.active.scroll = app.active.scroll.saturating_add(1)
-        }
-        KeyCode::Char('k') | KeyCode::Up => app.active.scroll = app.active.scroll.saturating_sub(1),
-        KeyCode::Char('q') => app.mode = Mode::ConfirmQuit,
-        KeyCode::Char('s') => open_temporary_shell(terminal)?,
+        KeyCode::Char('l') | KeyCode::Right | KeyCode::Char(' ') => next_slide(app)?,
+        KeyCode::Char('h') | KeyCode::Left => previous_slide(app)?,
+        KeyCode::Char('r') => render_active_slide(app)?,
+        KeyCode::Char('s') => open_temporary_shell(app)?,
+        KeyCode::Char('q') => return confirm_quit(),
         _ => {}
     }
 
     Ok(false)
 }
 
-fn handle_confirm_quit_key(app: &mut App, key: KeyEvent) -> bool {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter | KeyCode::Char('q') => true,
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            app.mode = Mode::Presenting;
-            false
+fn confirm_quit() -> Result<bool> {
+    print!("\nQuit tuition? y/n ");
+    io::stdout().flush().ok();
+
+    enable_raw_mode().context("failed to enable raw mode")?;
+    let key = read_key();
+    disable_raw_mode().context("failed to disable raw mode")?;
+
+    match key?.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter | KeyCode::Char('q') => Ok(true),
+        _ => {
+            println!("cancelled");
+            Ok(false)
         }
-        _ => false,
     }
 }
 
-fn next_slide(app: &mut App) {
+fn next_slide(app: &mut App) -> Result<()> {
     let next = app.active.index + 1;
     if next < app.commands.len() {
-        activate_slide(app, next);
+        activate_slide(app, next)?;
     }
+    Ok(())
 }
 
-fn previous_slide(app: &mut App) {
+fn previous_slide(app: &mut App) -> Result<()> {
     if app.active.index > 0 {
-        activate_slide(app, app.active.index - 1);
+        activate_slide(app, app.active.index - 1)?;
     }
+    Ok(())
 }
 
-fn activate_slide(app: &mut App, index: usize) {
+fn activate_slide(app: &mut App, index: usize) -> Result<()> {
     app.active.index = index;
-    app.active.scroll = 0;
-    app.active.output = run_slide_command(&app.commands[index]);
+    render_active_slide(app)
 }
 
-fn open_temporary_shell(terminal: &mut Tui) -> Result<()> {
-    disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)
-        .context("failed to leave alternate screen")?;
-    terminal.show_cursor().context("failed to show cursor")?;
+fn render_active_slide(app: &mut App) -> Result<()> {
+    let slide = &app.commands[app.active.index];
+    let status_bar = status_bar(app);
+    run_slide_command(slide, &status_bar);
+    Ok(())
+}
+
+fn run_slide_command(slide: &SlideCommand, status_bar: &str) {
+    // Slides run attached directly to the terminal: no stdout/stderr capture, no ratatui
+    // rendering layer. This lets terminal image protocols (imgcat, sixel, kitty graphics)
+    // and arbitrary interactive programs work normally.
+    let _ = disable_raw_mode();
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let shell_result = run_prompted_shell(&shell);
+    let status = Command::new(shell)
+        .arg("-lc")
+        .arg(slide_shell_script(slide, status_bar))
+        .current_dir(slide_command_cwd(slide))
+        .status();
 
-    enable_raw_mode().context("failed to re-enable raw mode")?;
-    execute!(terminal.backend_mut(), EnterAlternateScreen)
-        .context("failed to re-enter alternate screen")?;
-    terminal.clear().context("failed to clear terminal")?;
+    if let Err(err) = status {
+        eprintln!("failed to execute command: {err}");
+    }
+}
 
-    shell_result.context("failed to launch temporary shell")?;
+fn slide_shell_script(slide: &SlideCommand, status_bar: &str) -> String {
+    format!(
+        "clear\nprintf '%s\\n\\n\\n' {}\n{}",
+        shell_single_quote(status_bar),
+        slide.command
+    )
+}
+
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn slide_command_cwd(slide: &SlideCommand) -> PathBuf {
+    slide
+        .file
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
+fn status_bar(app: &App) -> String {
+    let slide = &app.commands[app.active.index];
+    format!(
+        "\x1b[7m {}/{} \x1b[0m {}:{} | (r)erun | (s)hell | (q)uit",
+        app.active.index + 1,
+        app.commands.len(),
+        slide.file.display(),
+        slide.line,
+    )
+}
+
+fn render_status_bar(app: &App) -> Result<()> {
+    println!("{}", status_bar(app));
+    io::stdout().flush().context("failed to flush stdout")
+}
+
+fn cleanup_terminal() -> Result<()> {
+    let _ = disable_raw_mode();
     Ok(())
+}
+
+fn open_temporary_shell(app: &App) -> Result<()> {
+    let _ = disable_raw_mode();
+
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    run_prompted_shell(&shell).context("failed to launch temporary shell")?;
+
+    // Do not re-run the current slide after shell exit; just restore navigation hints.
+    render_status_bar(app)
 }
 
 fn run_prompted_shell(shell: &str) -> io::Result<std::process::ExitStatus> {
@@ -351,118 +339,6 @@ fn temporary_prompt_path(kind: &str) -> PathBuf {
     env::temp_dir().join(format!("tuition-{kind}-{}-{nanos}", std::process::id()))
 }
 
-fn render(frame: &mut Frame, app: &App) {
-    let area = frame.area();
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(area);
-
-    let slide = &app.commands[app.active.index];
-    let text = if app.active.output.success {
-        ansi_text(&app.active.output.stdout)
-    } else {
-        Text::from(diagnostic_slide(slide, &app.active.output))
-    };
-
-    let paragraph = Paragraph::new(text)
-        .wrap(Wrap { trim: false })
-        .scroll((app.active.scroll, 0));
-    frame.render_widget(paragraph, chunks[0]);
-
-    let footer = footer_line(app);
-    frame.render_widget(Paragraph::new(footer), chunks[1]);
-
-    if app.mode == Mode::ConfirmQuit {
-        render_quit_confirmation(frame);
-    }
-}
-
-fn ansi_text(stdout: &str) -> Text<'_> {
-    stdout
-        .into_text()
-        .unwrap_or_else(|_| Text::from(strip_escape_fallback(stdout)))
-}
-
-fn strip_escape_fallback(s: &str) -> String {
-    s.chars().filter(|ch| *ch != '\u{1b}').collect()
-}
-
-fn diagnostic_slide(slide: &SlideCommand, output: &SlideOutput) -> String {
-    format!(
-        "Command failed\n\nFile: {}\nLine: {}\nExit: {}\nDuration: {}\n\nCommand:\n{}\n\nSTDOUT:\n{}\n\nSTDERR:\n{}",
-        slide.file.display(),
-        slide.line,
-        output
-            .code
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "signal/unknown".to_string()),
-        format_duration(output.duration),
-        slide.command,
-        output.stdout,
-        output.stderr,
-    )
-}
-
-fn format_duration(duration: Duration) -> String {
-    if duration.as_secs() > 0 {
-        format!("{:.2}s", duration.as_secs_f64())
-    } else {
-        format!("{}ms", duration.as_millis())
-    }
-}
-
-fn footer_line(app: &App) -> Line<'static> {
-    let slide = &app.commands[app.active.index];
-    let mode = match app.mode {
-        Mode::Presenting => "",
-        Mode::ConfirmQuit => " | quit? y/n",
-    };
-
-    Line::from(vec![
-        Span::styled(
-            format!(" {}/{} ", app.active.index + 1, app.commands.len()),
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::White)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(format!(
-            " {}:{} | h/l prev/next | j/k scroll | s shell | q quit{}",
-            slide.file.display(),
-            slide.line,
-            mode,
-        )),
-    ])
-}
-
-fn render_quit_confirmation(frame: &mut Frame) {
-    let area = centered_rect(48, 5, frame.area());
-    let block = Block::default()
-        .title(" Confirm quit ")
-        .borders(Borders::ALL);
-    let paragraph = Paragraph::new("Quit tuition?\n\nPress y/Enter to quit, n/Esc to cancel.")
-        .block(block)
-        .style(Style::default().fg(Color::Yellow));
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(paragraph, area);
-}
-
-fn centered_rect(width: u16, height: u16, area: ratatui::layout::Rect) -> ratatui::layout::Rect {
-    let popup_width = width.min(area.width);
-    let popup_height = height.min(area.height);
-    let x = area.x + area.width.saturating_sub(popup_width) / 2;
-    let y = area.y + area.height.saturating_sub(popup_height) / 2;
-
-    ratatui::layout::Rect {
-        x,
-        y,
-        width: popup_width,
-        height: popup_height,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,33 +370,28 @@ mod tests {
     }
 
     #[test]
-    fn command_runner_captures_successful_stdout() {
+    fn slide_shell_script_starts_with_clear() {
         let slide = SlideCommand {
             file: PathBuf::from("test"),
             line: 1,
             command: "printf hello".to_string(),
         };
 
-        let output = run_slide_command(&slide);
-
-        assert!(output.success);
-        assert_eq!(output.stdout, "hello");
+        assert_eq!(
+            slide_shell_script(&slide, "status"),
+            "clear\nprintf '%s\\n\\n\\n' 'status'\nprintf hello"
+        );
     }
 
     #[test]
-    fn command_runner_captures_failure_diagnostics() {
+    fn slide_command_cwd_uses_slide_file_directory() {
         let slide = SlideCommand {
-            file: PathBuf::from("test"),
+            file: PathBuf::from("/tmp/tuition/slides.txt"),
             line: 1,
-            command: "printf out; printf err >&2; exit 7".to_string(),
+            command: "pwd".to_string(),
         };
 
-        let output = run_slide_command(&slide);
-
-        assert!(!output.success);
-        assert_eq!(output.code, Some(7));
-        assert_eq!(output.stdout, "out");
-        assert_eq!(output.stderr, "err");
+        assert_eq!(slide_command_cwd(&slide), PathBuf::from("/tmp/tuition"));
     }
 
     fn temp_file(name: &str, contents: &str) -> PathBuf {
