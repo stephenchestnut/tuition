@@ -4,6 +4,24 @@
 
 Slide commands run directly attached to your terminal, so normal terminal output, interactive programs, ANSI control sequences, and terminal image protocols can work naturally.
 
+## Quick start
+
+Clone the repo and run an included example with `cargo run`:
+
+```sh
+git clone https://github.com/stephenchestnut/tuition.git
+cd tuition
+cargo run -- examples/hello_world.txt
+```
+
+Try the color example too:
+
+```sh
+cargo run -- examples/colors.txt
+```
+
+Use `l`, right arrow, or space to advance; use `h` or left arrow to go back; press `q` to quit.
+
 ## Installation / build
 
 ```sh
