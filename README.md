@@ -17,7 +17,7 @@ cargo run -- examples/hello_world.txt
 Try the color example too:
 
 ```sh
-cargo run -- examples/colors.txt
+cargo run -- --aliases ./aliases examples/colors.txt
 ```
 
 Use `l`, right arrow, or space to advance; use `h` or left arrow to go back; press `q` to quit.
