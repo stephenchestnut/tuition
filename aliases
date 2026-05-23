@@ -1,0 +1,85 @@
+# slide-layout aliases
+# Usage: source aliases  (or add to ~/.bashrc)
+
+# Insert 4 spaces at cursor position (repeat for more)
+alias indent=printf "    "
+alias s4=printf "    "
+alias s8=printf "        "
+
+# Newline moves cursor to next line, column 0
+alias nl=printf "\n"
+
+# Empty line (newline + back to column 0)
+alias el=printf "\n\n"
+
+# ============================================
+# Color aliases (32 ANSI colors + modifiers)
+# ============================================
+
+# Reset everything
+export RESET="\033[0m"
+
+# --- Standard foreground colors ---
+export FGBLACK="\033[30m"   # Black
+export FGRED="\033[31m"     # Red
+export FGGREEN="\033[32m"   # Green
+export FGYELLOW="\033[33m"  # Yellow
+export FGBLUE="\033[34m"    # Blue
+export FGMAGENTA="\033[35m" # Magenta
+export FGCYAN="\033[36m"    # Cyan
+export FGWHITE="\033[37m"   # White
+
+# --- Bright foreground colors ---
+export FGGRAY="\033[90m"         # Bright Black (Gray)
+export FGBRED="\033[91m"   # Bright Red
+export FGBGREEN="\033[92m" # Bright Green
+export FGBYELLOW="\033[93m" # Bright Yellow
+export FGBBLUE="\033[94m"  # Bright Blue
+export FGBMAGENTA="\033[95m" # Bright Magenta
+export FGBCYAN="\033[96m"  # Bright Cyan
+export FGBWHITE="\033[97m" # Bright White
+
+# --- Background colors (sets background, some also set fg) ---
+export BGBLACK="\033[40m"        # Black bg
+export BGRED="\033[31;41m"      # Red fg/bg
+export BGGREEN="\033[32;42m"    # Green fg/bg
+export BGYELLOW="\033[33;43m"   # Yellow fg/bg
+export BGBLUE="\033[34;44m"     # Blue fg/bg
+export BGMAGENTA="\033[35;45m"  # Magenta fg/bg
+export BGCYAN="\033[36;46m"     # Cyan fg/bg
+export BGWHITE="\033[37;47m"    # White fg/bg
+
+# --- Bright background colors ----
+export BGBBLACK="\033[30;100m"         # Bright Black bg
+export BGBRED="\033[31;101m"          # Bright Red bg
+export BGBGREEN="\033[32;102m"       # Bright Green bg
+export BGBYELLOW="\033[33;103m"      # Bright Yellow bg
+export BGBBLUE="\033[34;104m"       # Bright Blue bg
+export BGBMAGENTA="\033[35;105m"    # Bright Magenta bg
+export BGBCYAN="\033[36;106m"       # Bright Cyan bg
+export BGBWHITE="\033[37;107m"      # Bright White bg
+
+# --- Highlight/status aliases for emphasis ---
+export HIGHLIGHT="\033[38;5;226;48;5;160m"  # White on bright red
+export SUCCESS="\033[38;5;231;48;5;46m"    # White on bright green
+export WARNING="\033[38;5;16;48;5;226m"    # Dark on yellow
+export INFO="\033[38;5;231;48;5;21m"       # White on bright blue
+
+# --- Style modifiers ---
+export BOLD="\033[1m"
+export DIM="\033[2m"
+export ITALIC="\033[3m"
+export UNDERLINE="\033[4m"
+export BLINK="\033[5m"
+export STRIKETHROUGH="\033[9m"
+export REVERSE="\033[7m"
+export HIDDEN="\033[8m"
+export BOLDOFF="\033[21m"
+export ITALICOFF="\033[23m"
+export UNDERLINEOFF="\033[24m"
+export REVERSEOFF="\033[27m"
+export HIDDENOFF="\033[28m"
+export STRIKETHROUGHOFF="\033[29m"
+
+# Reset everything
+export RESETFMT="\033[0m"
