@@ -1,5 +1,9 @@
 # tuition
 
+<p align="center">
+  <img src="tuition_icon_128_easel.png" alt="tuition logo" width="128" height="128">
+</p>
+
 `tuition` is a tiny command-driven terminal slide presenter. A slide deck is a text file where each slide is a shell command.
 
 Slide commands run directly attached to your terminal, so normal terminal output, interactive programs, ANSI control sequences, and terminal image protocols can work naturally.
