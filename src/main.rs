@@ -16,9 +16,10 @@ use crossterm::{
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 struct Cli {
-    /// Source this aliases file before running slides and temporary shells.
+    /// Source these aliases files before running slides and temporary shells.
+    /// Separate multiple files with semicolons, for example: --aliases './aliases;./more-aliases'.
     #[arg(long)]
-    aliases: Option<PathBuf>,
+    aliases: Option<String>,
 
     /// Print and run just one slide, then exit.
     #[arg(long)]
@@ -45,7 +46,7 @@ struct ActiveSlide {
 struct App {
     commands: Vec<SlideCommand>,
     active: ActiveSlide,
-    aliases: Option<PathBuf>,
+    aliases: Vec<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -58,7 +59,7 @@ fn main() -> Result<()> {
     let mut app = App {
         commands,
         active: ActiveSlide { index: 0 },
-        aliases: cli.aliases.map(|path| absolutize_path(&path)).transpose()?,
+        aliases: parse_aliases_arg(cli.aliases.as_deref())?,
     };
 
     if let Some(slide_number) = cli.slide {
@@ -195,11 +196,11 @@ fn activate_slide(app: &mut App, index: usize) -> Result<()> {
 fn render_active_slide(app: &mut App) -> Result<()> {
     let slide = &app.commands[app.active.index];
     let status_bar = status_bar(app);
-    run_slide_command(slide, &status_bar, app.aliases.as_deref());
+    run_slide_command(slide, &status_bar, &app.aliases);
     Ok(())
 }
 
-fn run_slide_command(slide: &SlideCommand, status_bar: &str, aliases_path: Option<&Path>) {
+fn run_slide_command(slide: &SlideCommand, status_bar: &str, aliases_paths: &[PathBuf]) {
     // Slides run attached directly to the terminal: no stdout/stderr capture, no ratatui
     // rendering layer. This lets terminal image protocols (imgcat, sixel, kitty graphics)
     // and arbitrary interactive programs work normally.
@@ -213,7 +214,7 @@ fn run_slide_command(slide: &SlideCommand, status_bar: &str, aliases_path: Optio
             slide,
             status_bar,
             shell_name.as_deref(),
-            aliases_path,
+            aliases_paths,
         ))
         .current_dir(slide_command_cwd(slide))
         .status();
@@ -227,7 +228,7 @@ fn slide_shell_script(
     slide: &SlideCommand,
     status_bar: &str,
     shell_name: Option<&str>,
-    aliases_path: Option<&Path>,
+    aliases_paths: &[PathBuf],
 ) -> String {
     let mut script = String::from("clear\n");
 
@@ -238,7 +239,7 @@ fn slide_shell_script(
         script.push_str("emulate -L sh\n");
     }
 
-    if let Some(prelude) = aliases_prelude(shell_name, aliases_path, &slide_command_cwd(slide)) {
+    if let Some(prelude) = aliases_prelude(shell_name, aliases_paths, &slide_command_cwd(slide)) {
         script.push_str(&prelude);
     }
 
@@ -263,6 +264,16 @@ fn slide_command_cwd(slide: &SlideCommand) -> PathBuf {
         .to_path_buf()
 }
 
+fn parse_aliases_arg(aliases: Option<&str>) -> Result<Vec<PathBuf>> {
+    aliases
+        .into_iter()
+        .flat_map(|aliases| aliases.split(';'))
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(|path| absolutize_path(Path::new(path)))
+        .collect()
+}
+
 fn absolutize_path(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         Ok(path.to_path_buf())
@@ -275,24 +286,32 @@ fn absolutize_path(path: &Path) -> Result<PathBuf> {
 
 fn aliases_prelude(
     shell_name: Option<&str>,
-    aliases_path: Option<&Path>,
+    aliases_paths: &[PathBuf],
     start_dir: &Path,
 ) -> Option<String> {
-    let aliases = aliases_path
-        .map(Path::to_path_buf)
-        .or_else(|| find_aliases_file(start_dir))?;
-    let aliases_path = shell_single_quote(&aliases.to_string_lossy());
+    let aliases = effective_aliases_paths(aliases_paths, start_dir)?;
 
     let mut prelude = String::new();
     if matches!(shell_name, Some("bash")) {
         prelude.push_str("shopt -s expand_aliases\n");
     }
-    prelude.push_str(&format!(
-        "if [ -r {} ]; then\n  . {}\nfi\n",
-        aliases_path, aliases_path
-    ));
-    prelude.push_str(&aliases_function_definitions(&aliases));
+    for aliases_path in aliases {
+        let quoted_path = shell_single_quote(&aliases_path.to_string_lossy());
+        prelude.push_str(&format!(
+            "if [ -r {} ]; then\n  . {}\nfi\n",
+            quoted_path, quoted_path
+        ));
+        prelude.push_str(&aliases_function_definitions(&aliases_path));
+    }
     Some(prelude)
+}
+
+fn effective_aliases_paths(aliases_paths: &[PathBuf], start_dir: &Path) -> Option<Vec<PathBuf>> {
+    if aliases_paths.is_empty() {
+        find_aliases_file(start_dir).map(|path| vec![path])
+    } else {
+        Some(aliases_paths.to_vec())
+    }
 }
 
 fn aliases_function_definitions(path: &Path) -> String {
@@ -379,8 +398,7 @@ fn open_temporary_shell(app: &App) -> Result<()> {
     let _ = disable_raw_mode();
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    run_prompted_shell(&shell, app.aliases.as_deref())
-        .context("failed to launch temporary shell")?;
+    run_prompted_shell(&shell, &app.aliases).context("failed to launch temporary shell")?;
 
     // Do not re-run the current slide after shell exit; just restore navigation hints.
     render_status_bar(app)
@@ -388,16 +406,15 @@ fn open_temporary_shell(app: &App) -> Result<()> {
 
 fn run_prompted_shell(
     shell: &str,
-    aliases_path: Option<&Path>,
+    aliases_paths: &[PathBuf],
 ) -> io::Result<std::process::ExitStatus> {
-    let aliases = aliases_path.map(Path::to_path_buf).or_else(|| {
-        env::current_dir()
-            .ok()
-            .and_then(|dir| find_aliases_file(&dir))
-    });
+    let aliases = env::current_dir()
+        .ok()
+        .and_then(|dir| effective_aliases_paths(aliases_paths, &dir))
+        .unwrap_or_default();
     match shell_name(shell).as_deref() {
-        Some("bash") => run_bash_with_tuition_prompt(shell, aliases.as_deref()),
-        Some("zsh") => run_zsh_with_tuition_prompt(shell, aliases.as_deref()),
+        Some("bash") => run_bash_with_tuition_prompt(shell, &aliases),
+        Some("zsh") => run_zsh_with_tuition_prompt(shell, &aliases),
         Some("fish") => run_fish_with_tuition_prompt(shell),
         _ => Command::new(shell)
             .env("PS1", "(TUITION) ")
@@ -415,7 +432,7 @@ fn shell_name(shell: &str) -> Option<String> {
 
 fn run_bash_with_tuition_prompt(
     shell: &str,
-    aliases_path: Option<&Path>,
+    aliases_paths: &[PathBuf],
 ) -> io::Result<std::process::ExitStatus> {
     let rcfile = temporary_prompt_path("bashrc");
     let mut contents = String::from(
@@ -424,9 +441,11 @@ fn run_bash_with_tuition_prompt(
 fi
 "#,
     );
-    if let Some(aliases_path) = aliases_path {
-        let aliases_path = shell_single_quote(&aliases_path.to_string_lossy());
+    if !aliases_paths.is_empty() {
         contents.push_str("shopt -s expand_aliases\n");
+    }
+    for aliases_path in aliases_paths {
+        let aliases_path = shell_single_quote(&aliases_path.to_string_lossy());
         contents.push_str(&format!(
             "if [ -r {} ]; then\n  . {}\nfi\n",
             aliases_path, aliases_path
@@ -446,7 +465,7 @@ fi
 
 fn run_zsh_with_tuition_prompt(
     shell: &str,
-    aliases_path: Option<&Path>,
+    aliases_paths: &[PathBuf],
 ) -> io::Result<std::process::ExitStatus> {
     let zdotdir = temporary_prompt_path("zsh");
     fs::create_dir_all(&zdotdir)?;
@@ -458,7 +477,7 @@ elif [ -r "$HOME/.zshrc" ]; then
 fi
 "#,
     );
-    if let Some(aliases_path) = aliases_path {
+    for aliases_path in aliases_paths {
         let aliases_path = shell_single_quote(&aliases_path.to_string_lossy());
         contents.push_str(&format!(
             "if [ -r {} ]; then\n  . {}\nfi\n",
@@ -553,7 +572,7 @@ mod tests {
         };
 
         assert_eq!(
-            slide_shell_script(&slide, "status", Some("bash"), None),
+            slide_shell_script(&slide, "status", Some("bash"), &[]),
             "clear\nprintf '%s\\n\\n\\n' 'status'\nprintf hello"
         );
     }
@@ -567,6 +586,17 @@ mod tests {
         };
 
         assert_eq!(slide_command_cwd(&slide), PathBuf::from("/tmp/tuition"));
+    }
+
+    #[test]
+    fn parses_semicolon_separated_aliases_arg() {
+        let aliases = parse_aliases_arg(Some("aliases; examples/more-aliases ;")).unwrap();
+        let cwd = env::current_dir().unwrap();
+
+        assert_eq!(
+            aliases,
+            vec![cwd.join("aliases"), cwd.join("examples/more-aliases")]
+        );
     }
 
     #[test]
