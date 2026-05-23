@@ -1,7 +1,7 @@
 # A short tuition hello world presentation
 printf '\033[1;36mHello, world!\033[0m\n\nWelcome to tuition.\n'
 printf 'Each non-comment line is a shell command.\n\nThis is slide 2.\n'
-printf 'Use l/space/right for next, h/left for previous, j/k/up/down to scroll, q to quit.\n'
+printf 'Use\n - l/space/right for next,\n - h/left for previous,\n - up/down to scroll when the slide is long,\n - r to rerun the command on a slide,\n - s to drop into the shell temporarily,\n - q to quit.\n'
 printf 'You can display images using `imgcat` on mac or `img2sixel` on linux.\n'; imgcat -W 500px -s ../tuition_icon_128_easel.png; printf "\nIf you can't see the tuition logo above, something is wrong.\n"
 printf 'Some commands may reference files.\n\nThe paths can be absolute or relative to the slides txt.'
 printf 'Slides can run arbitrary programs!\n\n You can advance the slide when the program exits.\n\n....You do remember how to quit vim, right?'
