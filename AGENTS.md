@@ -1,201 +1,108 @@
-# Implementation Plan
+# tuition implementation notes
 
-## Key semantic choice
+## Architecture
 
-`tuition` will **not cache slide outputs**.
+`tuition` is a command-driven terminal slide presenter. The current implementation intentionally runs slide commands directly attached to the user's terminal.
 
-Each time a slide becomes active via navigation, its command is re-executed. That means:
+Do **not** introduce a ratatui layer, captured-output renderer, scrolling UI, or output cache unless explicitly requested later.
 
-```txt
-slide 1 -> slide 2 -> slide 1
-```
+## Execution model
 
-executes slide 1 twice.
+- Each slide is one shell command line from an input file.
+- The active slide is run with:
 
-Important nuance:
+  ```sh
+  $SHELL -lc '<generated script>'
+  ```
 
-> Re-execute when the active slide changes, not on every TUI redraw.
+  falling back to `/bin/sh` when `$SHELL` is unset.
+- The generated script prints the status bar, loads aliases where applicable, then executes the slide command.
+- Commands run with their current directory set to the slide file's directory.
+- Output is **not captured** by `tuition`; stdout, stderr, prompts, cursor control, and terminal protocols go directly to the terminal.
+- Interactive commands and terminal image protocols are intentionally supported.
+- There is no command timeout and no cached output.
 
-These should **not** re-execute the command:
+## Slide parsing
 
-- terminal resize
-- scrolling with `j/k`
-- footer redraw
-- quit confirmation open/cancel
-
-These **should** re-execute:
-
-- navigating forward into a slide
-- navigating backward into a slide
-- startup display of first slide
-- returning to a slide later
-
-This preserves dynamic output while avoiding pathological re-execution during normal rendering.
-
-## Final v1 behavior
+For:
 
 ```sh
 tuition file1.txt file2.txt
 ```
 
-- reads all input files in order
-- ignores blank lines
-- ignores lines whose trimmed form starts with `#`
-- each remaining line is one slide command
-- command is executed with:
+- Read input files in the order supplied.
+- Ignore blank or whitespace-only lines.
+- Ignore lines whose trimmed form starts with `#`.
+- Preserve the original command line text for every slide command.
+- Store the source file path and line number with each command.
+- Inline `#` characters are part of the command; they are not treated as comments.
 
-```sh
-$SHELL -lc '<command>'
-```
-
-falling back to `/bin/sh`
-
-- command output is captured for the currently active display only
-- stdout is rendered for successful commands
-- failed commands render a diagnostic error slide
-- no output cache
-- no command timeout
-- successful stderr is not shown
-
-## App model
-
-```rust
-struct SlideCommand {
-    file: PathBuf,
-    line: usize,
-    command: String,
-}
-
-struct ActiveSlide {
-    index: usize,
-    output: SlideOutput,
-    scroll: u16,
-}
-
-struct SlideOutput {
-    success: bool,
-    code: Option<i32>,
-    stdout: String,
-    stderr: String,
-    duration: Duration,
-}
-
-struct App {
-    commands: Vec<SlideCommand>,
-    active: ActiveSlide,
-    mode: Mode,
-}
-
-enum Mode {
-    Presenting,
-    ConfirmQuit,
-}
-```
-
-No per-slide cache.
-
-## Navigation behavior
+## Navigation
 
 Keys:
 
 ```txt
 l / right-arrow / space = next slide
 h / left-arrow          = previous slide
-j / down-arrow          = scroll down
-k / up-arrow            = scroll up
+r                       = rerun current slide
 s                       = temporary shell
 q                       = quit confirmation
 Ctrl-C                  = immediate quit
 ```
 
-When navigating:
+There are no scrolling keys in the current terminal-attached implementation.
 
-1. update slide index
-2. reset scroll to `0`
-3. execute that slide command
-4. store output in `active.output`
-5. render
+## Re-execution behavior
 
-At bounds:
+- Startup runs slide 1.
+- Moving to a different slide runs that slide.
+- Pressing `r` reruns the current slide.
+- Attempting to move past the first or final slide does nothing and does not rerun anything.
+- Returning from the temporary shell does not rerun the slide; it only redraws the status bar/navigation hints.
 
-- next on final slide does nothing
-- previous on first slide does nothing
-- no re-execution if index does not change
+## Status bar
 
-## Rendering
+The status bar is printed before each slide command. It includes:
 
-### Successful command
+- current slide number
+- total slide count
+- source file
+- source line
+- key hints for rerun, shell, and quit
 
-Render stdout with ANSI support.
+## Aliases
 
-- ANSI colors/styles supported via `ansi-to-tui`
-- lines wrap to terminal width
-- vertical scrolling with `j/k` or up/down
+Aliases may be provided explicitly:
 
-### Failed command
-
-Render generated diagnostic slide:
-
-```txt
-Command failed
-
-File: slides/demo.txt
-Line: 12
-Exit: 1
-Duration: 38ms
-
-Command:
-cargo test
-
-STDOUT:
-...
-
-STDERR:
-...
+```sh
+tuition --aliases './aliases;./more-aliases' slides.txt
 ```
+
+- Empty `--aliases` segments are ignored.
+- Relative alias paths are resolved relative to the process current directory.
+- Absolute alias paths remain absolute.
+
+If `--aliases` is not supplied, `tuition` searches upward from the slide command cwd for the nearest file named `aliases`.
+
+When alias files are used:
+
+- Bash gets `shopt -s expand_aliases`.
+- Alias files are sourced before slide commands.
+- Alias definitions are also converted into shell functions so they work in non-interactive slide command execution.
+- Invalid alias names are ignored during function generation.
 
 ## Temporary shell
 
-On `s`:
+On `s`, `tuition` launches the user's shell with a custom `(TUITION)` prompt.
 
-1. leave alternate screen
-2. disable raw mode
-3. spawn `$SHELL`
-4. wait for exit
-5. restore raw mode
-6. re-enter alternate screen
-7. redraw current slide
+- Bash, zsh, and fish receive shell-specific prompt setup.
+- Aliases are loaded where applicable.
+- Exiting the temporary shell returns to `tuition` without rerunning the current slide.
 
-Returning from shell should **not automatically re-execute** the current slide. It returns to the same active output.
+## Implementation guidance
 
-## Implementation phases
-
-1. Create Rust binary crate.
-2. Add deps:
-   - `clap`
-   - `ratatui`
-   - `crossterm`
-   - `anyhow`
-   - `ansi-to-tui`
-3. Implement CLI: `tuition <files>...`.
-4. Implement parser:
-   - ordered files
-   - blank/comment skipping
-   - source file + line metadata
-5. Implement command runner:
-   - `$SHELL -lc`
-   - capture stdout/stderr/status
-   - no timeout
-6. Implement TUI setup/cleanup.
-7. Implement event loop.
-8. Implement rendering:
-   - ANSI stdout slide
-   - diagnostic error slide
-   - footer
-   - wrapping/scrolling
-9. Implement temporary shell escape.
-10. Add unit/manual tests.
-
-## Final decision
-
-Returning from temporary shell with `s` does **not** refresh/re-execute the current slide.
+- Keep the current terminal-attached execution model.
+- Do not add output caching.
+- Do not capture slide output for rendering.
+- Do not add ratatui or scrolling behavior unless explicitly requested later.
+- Preserve current keybindings and temporary shell behavior.

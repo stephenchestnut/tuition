@@ -544,7 +544,7 @@ mod tests {
             "slides",
             "\n# comment\n echo one\n\t# indented comment\necho two\n",
         );
-        let commands = parse_slide_files(&[path.clone()]).unwrap();
+        let commands = parse_slide_files(std::slice::from_ref(&path)).unwrap();
 
         assert_eq!(
             commands,
@@ -561,6 +561,73 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parser_preserves_multiple_file_order() {
+        let first = temp_file("slides-a", "echo a1\necho a2\n");
+        let second = temp_file("slides-b", "echo b1\n");
+        let commands = parse_slide_files(&[first.clone(), second.clone()]).unwrap();
+
+        assert_eq!(commands[0].file, first);
+        assert_eq!(commands[0].command, "echo a1");
+        assert_eq!(commands[1].command, "echo a2");
+        assert_eq!(commands[2].file, second);
+        assert_eq!(commands[2].command, "echo b1");
+    }
+
+    #[test]
+    fn parser_missing_file_returns_contextual_error() {
+        let missing = unique_temp_path("missing-slides");
+        let err = parse_slide_files(std::slice::from_ref(&missing))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("failed to read slide file"));
+        assert!(err.contains(&missing.display().to_string()));
+    }
+
+    #[test]
+    fn parser_ignores_whitespace_only_lines() {
+        let path = temp_file("slides", "   \n\t\n echo one\n");
+        let commands = parse_slide_files(&[path]).unwrap();
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].line, 3);
+        assert_eq!(commands[0].command, " echo one");
+    }
+
+    #[test]
+    fn parser_ignores_indented_comments() {
+        let path = temp_file("slides", "  # comment\necho one\n");
+        let commands = parse_slide_files(&[path]).unwrap();
+
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].line, 2);
+    }
+
+    #[test]
+    fn parser_preserves_inline_hashes() {
+        let path = temp_file("slides", "echo before # after\n");
+        let commands = parse_slide_files(&[path]).unwrap();
+
+        assert_eq!(commands[0].command, "echo before # after");
+    }
+
+    #[test]
+    fn run_single_slide_rejects_zero() {
+        let mut app = test_app(vec![":"], vec![]);
+        let err = run_single_slide(&mut app, 0).unwrap_err().to_string();
+
+        assert!(err.contains("--slide must be at least 1"));
+    }
+
+    #[test]
+    fn run_single_slide_rejects_out_of_range() {
+        let mut app = test_app(vec![":"], vec![]);
+        let err = run_single_slide(&mut app, 2).unwrap_err().to_string();
+
+        assert!(err.contains("--slide 2 is out of range; there are 1 slides"));
     }
 
     #[test]
@@ -589,6 +656,60 @@ mod tests {
     }
 
     #[test]
+    fn slide_command_cwd_returns_dot_for_files_without_parent_directory() {
+        let slide = SlideCommand {
+            file: PathBuf::from("slides.txt"),
+            line: 1,
+            command: "pwd".to_string(),
+        };
+
+        assert_eq!(slide_command_cwd(&slide), PathBuf::from("."));
+    }
+
+    #[test]
+    fn shell_single_quote_handles_apostrophes() {
+        assert_eq!(shell_single_quote("don't"), "'don'\\''t'");
+    }
+
+    #[test]
+    fn zsh_scripts_include_emulate_sh() {
+        let slide = test_slide("echo hi");
+        let script = slide_shell_script(&slide, "status", Some("zsh"), &[]);
+
+        assert!(script.contains("emulate -L sh\n"));
+    }
+
+    #[test]
+    fn bash_alias_prelude_includes_expand_aliases() {
+        let aliases = unique_temp_path("aliases");
+        let prelude = aliases_prelude(Some("bash"), &[aliases], Path::new(".")).unwrap();
+
+        assert!(prelude.contains("shopt -s expand_aliases"));
+    }
+
+    #[test]
+    fn status_bar_includes_count_file_line_and_hints() {
+        let app = test_app(vec!["echo one", "echo two"], vec![]);
+        let status = status_bar(&app);
+
+        assert!(status.contains("1/2"));
+        assert!(status.contains("slides.txt:1"));
+        assert!(status.contains("(r)erun"));
+        assert!(status.contains("(s)hell"));
+        assert!(status.contains("(q)uit"));
+    }
+
+    #[test]
+    fn generated_slide_script_includes_status_bar_before_command() {
+        let slide = test_slide("echo command");
+        let script = slide_shell_script(&slide, "STATUS", Some("sh"), &[]);
+
+        let status_pos = script.find("STATUS").unwrap();
+        let command_pos = script.find("echo command").unwrap();
+        assert!(status_pos < command_pos);
+    }
+
+    #[test]
     fn parses_semicolon_separated_aliases_arg() {
         let aliases = parse_aliases_arg(Some("aliases; examples/more-aliases ;")).unwrap();
         let cwd = env::current_dir().unwrap();
@@ -597,6 +718,22 @@ mod tests {
             aliases,
             vec![cwd.join("aliases"), cwd.join("examples/more-aliases")]
         );
+    }
+
+    #[test]
+    fn empty_alias_arg_segments_are_ignored() {
+        let aliases = parse_aliases_arg(Some("; aliases ;; ;")).unwrap();
+        let cwd = env::current_dir().unwrap();
+
+        assert_eq!(aliases, vec![cwd.join("aliases")]);
+    }
+
+    #[test]
+    fn absolute_alias_paths_remain_absolute() {
+        let absolute = unique_temp_path("aliases");
+        let aliases = parse_aliases_arg(Some(&absolute.to_string_lossy())).unwrap();
+
+        assert_eq!(aliases, vec![absolute]);
     }
 
     #[test]
@@ -611,13 +748,120 @@ mod tests {
         assert!(defs.contains("s4() { printf \\\"    \\\"; }"));
     }
 
+    #[test]
+    fn invalid_alias_names_are_ignored() {
+        let path = temp_file("aliases", "alias 1bad='echo no'\nalias good='echo yes'\n");
+        let defs = aliases_function_definitions(&path);
+
+        assert!(!defs.contains("1bad()"));
+        assert!(defs.contains("good() { echo yes; }"));
+    }
+
+    #[test]
+    fn quoted_alias_bodies_are_stripped() {
+        let path = temp_file(
+            "aliases",
+            "alias sq='echo single'\nalias dq=\"echo double\"\n",
+        );
+        let defs = aliases_function_definitions(&path);
+
+        assert!(defs.contains("sq() { echo single; }"));
+        assert!(defs.contains("dq() { echo double; }"));
+    }
+
+    #[test]
+    fn missing_alias_file_returns_empty_function_definitions() {
+        let missing = unique_temp_path("missing-aliases");
+
+        assert_eq!(aliases_function_definitions(&missing), "");
+    }
+
+    #[test]
+    fn find_aliases_file_finds_nearest_upward_aliases() {
+        let root = temp_dir("aliases-root");
+        let child = root.join("child");
+        let grandchild = child.join("grandchild");
+        fs::create_dir_all(&grandchild).unwrap();
+        fs::write(root.join("aliases"), "alias root='echo root'\n").unwrap();
+        fs::write(child.join("aliases"), "alias child='echo child'\n").unwrap();
+
+        assert_eq!(find_aliases_file(&grandchild), Some(child.join("aliases")));
+    }
+
+    #[test]
+    fn next_slide_increments_when_not_at_final_slide() {
+        let mut app = test_app(vec![":", ":"], vec![unique_temp_path("aliases")]);
+        next_slide(&mut app).unwrap();
+
+        assert_eq!(app.active.index, 1);
+    }
+
+    #[test]
+    fn next_slide_does_nothing_at_final_slide() {
+        let mut app = test_app(vec![":"], vec![unique_temp_path("aliases")]);
+        next_slide(&mut app).unwrap();
+
+        assert_eq!(app.active.index, 0);
+    }
+
+    #[test]
+    fn previous_slide_decrements_when_not_at_first_slide() {
+        let mut app = test_app(vec![":", ":"], vec![unique_temp_path("aliases")]);
+        app.active.index = 1;
+        previous_slide(&mut app).unwrap();
+
+        assert_eq!(app.active.index, 0);
+    }
+
+    #[test]
+    fn previous_slide_does_nothing_at_first_slide() {
+        let mut app = test_app(vec![":"], vec![unique_temp_path("aliases")]);
+        previous_slide(&mut app).unwrap();
+
+        assert_eq!(app.active.index, 0);
+    }
+
+    fn test_app(commands: Vec<&str>, aliases: Vec<PathBuf>) -> App {
+        App {
+            commands: commands
+                .into_iter()
+                .enumerate()
+                .map(|(idx, command)| SlideCommand {
+                    file: PathBuf::from("slides.txt"),
+                    line: idx + 1,
+                    command: command.to_string(),
+                })
+                .collect(),
+            active: ActiveSlide { index: 0 },
+            aliases,
+        }
+    }
+
+    fn test_slide(command: &str) -> SlideCommand {
+        SlideCommand {
+            file: PathBuf::from("slides.txt"),
+            line: 1,
+            command: command.to_string(),
+        }
+    }
+
     fn temp_file(name: &str, contents: &str) -> PathBuf {
+        let path = unique_temp_path(name);
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let path = unique_temp_path(name);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn unique_temp_path(name: &str) -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = env::temp_dir().join(format!("tuition-{name}-{unique}.txt"));
-        fs::write(&path, contents).unwrap();
-        path
+        env::temp_dir().join(format!("tuition-{name}-{}-{unique}", std::process::id()))
     }
 }

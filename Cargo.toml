@@ -9,3 +9,8 @@ description = "A tiny command-driven terminal slide presenter"
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
