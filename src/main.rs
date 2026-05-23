@@ -1,10 +1,9 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     io::{self, Stdout},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use ansi_to_tui::IntoText;
@@ -155,7 +154,8 @@ fn setup_tui() -> Result<Tui> {
 
 fn cleanup_tui(terminal: &mut Tui) -> Result<()> {
     disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).context("failed to leave alternate screen")?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)
+        .context("failed to leave alternate screen")?;
     terminal.show_cursor().context("failed to show cursor")?;
     Ok(())
 }
@@ -187,7 +187,9 @@ fn handle_presenting_key(terminal: &mut Tui, app: &mut App, key: KeyEvent) -> Re
     match key.code {
         KeyCode::Char('l') | KeyCode::Right | KeyCode::Char(' ') => next_slide(app),
         KeyCode::Char('h') | KeyCode::Left => previous_slide(app),
-        KeyCode::Char('j') | KeyCode::Down => app.active.scroll = app.active.scroll.saturating_add(1),
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.active.scroll = app.active.scroll.saturating_add(1)
+        }
         KeyCode::Char('k') | KeyCode::Up => app.active.scroll = app.active.scroll.saturating_sub(1),
         KeyCode::Char('q') => app.mode = Mode::ConfirmQuit,
         KeyCode::Char('s') => open_temporary_shell(terminal)?,
@@ -229,18 +231,124 @@ fn activate_slide(app: &mut App, index: usize) {
 
 fn open_temporary_shell(terminal: &mut Tui) -> Result<()> {
     disable_raw_mode().context("failed to disable raw mode")?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen).context("failed to leave alternate screen")?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)
+        .context("failed to leave alternate screen")?;
     terminal.show_cursor().context("failed to show cursor")?;
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
-    let shell_result = Command::new(shell).status();
+    let shell_result = run_prompted_shell(&shell);
 
     enable_raw_mode().context("failed to re-enable raw mode")?;
-    execute!(terminal.backend_mut(), EnterAlternateScreen).context("failed to re-enter alternate screen")?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)
+        .context("failed to re-enter alternate screen")?;
     terminal.clear().context("failed to clear terminal")?;
 
     shell_result.context("failed to launch temporary shell")?;
     Ok(())
+}
+
+fn run_prompted_shell(shell: &str) -> io::Result<std::process::ExitStatus> {
+    match shell_name(shell).as_deref() {
+        Some("bash") => run_bash_with_tuition_prompt(shell),
+        Some("zsh") => run_zsh_with_tuition_prompt(shell),
+        Some("fish") => run_fish_with_tuition_prompt(shell),
+        _ => Command::new(shell)
+            .env("PS1", "(TUITION) ")
+            .env("PROMPT", "(TUITION) ")
+            .status(),
+    }
+}
+
+fn shell_name(shell: &str) -> Option<String> {
+    Path::new(shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.trim_start_matches('-').to_string())
+}
+
+fn run_bash_with_tuition_prompt(shell: &str) -> io::Result<std::process::ExitStatus> {
+    let rcfile = temporary_prompt_path("bashrc");
+    let contents = r#"if [ -r "$HOME/.bashrc" ]; then
+  . "$HOME/.bashrc"
+fi
+PS1='(TUITION) '
+PROMPT_COMMAND='PS1="(TUITION) "'
+"#;
+    fs::write(&rcfile, contents)?;
+    let result = Command::new(shell)
+        .arg("--rcfile")
+        .arg(&rcfile)
+        .arg("-i")
+        .env("PS1", "(TUITION) ")
+        .status();
+    let _ = fs::remove_file(rcfile);
+    result
+}
+
+fn run_zsh_with_tuition_prompt(shell: &str) -> io::Result<std::process::ExitStatus> {
+    let zdotdir = temporary_prompt_path("zsh");
+    fs::create_dir_all(&zdotdir)?;
+    let contents = r#"if [ -n "$TUITION_ORIGINAL_ZDOTDIR" ] && [ -r "$TUITION_ORIGINAL_ZDOTDIR/.zshrc" ]; then
+  . "$TUITION_ORIGINAL_ZDOTDIR/.zshrc"
+elif [ -r "$HOME/.zshrc" ]; then
+  . "$HOME/.zshrc"
+fi
+PROMPT='(TUITION) '
+PS1='(TUITION) '
+RPROMPT=''
+RPS1=''
+precmd_functions=(tuition_prompt_precmd)
+tuition_prompt_precmd() {
+  PROMPT='(TUITION) '
+  PS1='(TUITION) '
+  RPROMPT=''
+  RPS1=''
+}
+"#;
+    fs::write(zdotdir.join(".zshrc"), contents)?;
+    let mut command = Command::new(shell);
+    command
+        .env("ZDOTDIR", &zdotdir)
+        .env("PS1", "(TUITION) ")
+        .env("PROMPT", "(TUITION) ");
+    if let Ok(original_zdotdir) = env::var("ZDOTDIR") {
+        command.env("TUITION_ORIGINAL_ZDOTDIR", original_zdotdir);
+    }
+    let result = command.status();
+    let _ = fs::remove_dir_all(zdotdir);
+    result
+}
+
+fn run_fish_with_tuition_prompt(shell: &str) -> io::Result<std::process::ExitStatus> {
+    let config_home = temporary_prompt_path("fish");
+    let fish_dir = config_home.join("fish");
+    fs::create_dir_all(&fish_dir)?;
+    let contents = r#"if test -r "$TUITION_ORIGINAL_FISH_CONFIG"
+  source "$TUITION_ORIGINAL_FISH_CONFIG"
+end
+function fish_prompt
+  echo -n '(TUITION) '
+end
+"#;
+    fs::write(fish_dir.join("config.fish"), contents)?;
+    let original_config = env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"))
+        .join("fish/config.fish");
+    let result = Command::new(shell)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env("TUITION_ORIGINAL_FISH_CONFIG", original_config)
+        .status();
+    let _ = fs::remove_dir_all(config_home);
+    result
+}
+
+fn temporary_prompt_path(kind: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    env::temp_dir().join(format!("tuition-{kind}-{}-{nanos}", std::process::id()))
 }
 
 fn render(frame: &mut Frame, app: &App) {
@@ -314,7 +422,10 @@ fn footer_line(app: &App) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             format!(" {}/{} ", app.active.index + 1, app.commands.len()),
-            Style::default().fg(Color::Black).bg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(format!(
             " {}:{} | h/l prev/next | j/k scroll | s shell | q quit{}",
@@ -327,7 +438,9 @@ fn footer_line(app: &App) -> Line<'static> {
 
 fn render_quit_confirmation(frame: &mut Frame) {
     let area = centered_rect(48, 5, frame.area());
-    let block = Block::default().title(" Confirm quit ").borders(Borders::ALL);
+    let block = Block::default()
+        .title(" Confirm quit ")
+        .borders(Borders::ALL);
     let paragraph = Paragraph::new("Quit tuition?\n\nPress y/Enter to quit, n/Esc to cancel.")
         .block(block)
         .style(Style::default().fg(Color::Yellow));
@@ -357,14 +470,25 @@ mod tests {
 
     #[test]
     fn parser_ignores_blank_and_comment_lines() {
-        let path = temp_file("slides", "\n# comment\n echo one\n\t# indented comment\necho two\n");
+        let path = temp_file(
+            "slides",
+            "\n# comment\n echo one\n\t# indented comment\necho two\n",
+        );
         let commands = parse_slide_files(&[path.clone()]).unwrap();
 
         assert_eq!(
             commands,
             vec![
-                SlideCommand { file: path.clone(), line: 3, command: " echo one".to_string() },
-                SlideCommand { file: path, line: 5, command: "echo two".to_string() },
+                SlideCommand {
+                    file: path.clone(),
+                    line: 3,
+                    command: " echo one".to_string()
+                },
+                SlideCommand {
+                    file: path,
+                    line: 5,
+                    command: "echo two".to_string()
+                },
             ]
         );
     }
