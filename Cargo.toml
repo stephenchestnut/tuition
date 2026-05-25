@@ -1,9 +1,15 @@
 [package]
 name = "tuition"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
 description = "A tiny command-driven terminal slide presenter"
+repository = "https://github.com/stephenchestnut/tuition"
+homepage = "https://github.com/stephenchestnut/tuition"
+documentation = "https://docs.rs/tuition"
+readme = "README.md"
+keywords = ["cli", "terminal", "slides", "presentation", "rust"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1"

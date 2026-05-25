@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 pub mod aliases;
 pub mod app;
@@ -8,11 +8,11 @@ pub mod slides;
 pub mod terminal;
 
 use aliases::parse_aliases_arg;
-use app::{run_app, run_single_slide, App};
+use app::{App, run_app, run_single_slide};
 use cli::Cli;
 use shell::ShellCommandRunner;
 use slides::parse_slide_files;
-use terminal::{cleanup_terminal, CrosstermTerminal};
+use terminal::{CrosstermTerminal, cleanup_terminal};
 
 pub fn run(cli: Cli) -> Result<()> {
     let commands = parse_slide_files(&cli.files)?;

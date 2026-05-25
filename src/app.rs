@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{slides::SlideCommand, terminal::Terminal};
@@ -411,10 +411,12 @@ mod tests {
 
         assert_eq!(runner.runs.len(), 1);
         assert_eq!(runner.shells_opened, 1);
-        assert!(terminal
-            .events
-            .iter()
-            .any(|event| event.starts_with("print:\x1b[7m 1/1")));
+        assert!(
+            terminal
+                .events
+                .iter()
+                .any(|event| event.starts_with("print:\x1b[7m 1/1"))
+        );
     }
 
     #[test]

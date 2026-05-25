@@ -161,7 +161,10 @@ mod tests {
 
     #[test]
     fn aliases_function_definitions_turn_aliases_into_functions() {
-        let path = temp_file("aliases", "alias el=\"printf \\\"\\n\\n\\\"\"\nalias s4=\"printf \\\"    \\\"\"\nexport FOO=bar\n");
+        let path = temp_file(
+            "aliases",
+            "alias el=\"printf \\\"\\n\\n\\\"\"\nalias s4=\"printf \\\"    \\\"\"\nexport FOO=bar\n",
+        );
 
         let defs = aliases_function_definitions(&path);
         assert!(defs.contains("el() { printf \\\"\\n\\n\\\"; }"));

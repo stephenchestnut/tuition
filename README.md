@@ -130,6 +130,10 @@ tuition --slide 2 slides.txt
 tuition --aliases './aliases' slides.txt
 ```
 
+## Agent skill
+
+This repo includes an agent skill for creating tuition presentations at [`skills/tuition.md`](skills/tuition.md). It explains the slide text format, style guidance, aliases, colors, and includes the hello world presentation as an example.
+
 ## Development
 
 See [docs/architecture.md](docs/architecture.md) for implementation details.
