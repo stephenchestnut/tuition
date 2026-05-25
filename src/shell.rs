@@ -10,7 +10,7 @@ use anyhow::Result;
 use crate::{
     aliases::{aliases_prelude, effective_aliases_paths},
     app::CommandRunner,
-    slides::{slide_command_cwd, SlideCommand},
+    slides::{SlideCommand, slide_command_cwd},
 };
 
 pub struct ShellCommandRunner;
