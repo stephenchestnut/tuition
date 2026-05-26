@@ -2,84 +2,137 @@
 # Usage: source aliases  (or add to ~/.bashrc)
 
 # Insert 4 spaces at cursor position (repeat for more)
-alias indent=printf "    "
-alias s4=printf "    "
-alias s8=printf "        "
+alias indent='printf "    "'
+alias dindent='printf "        "'
+alias s4='printf "    "'
+alias s8='printf "        "'
 
 # Newline moves cursor to next line, column 0
-alias nl=printf "\n"
+alias nl='printf "\n"'
 
 # Empty line (newline + back to column 0)
-alias el=printf "\n\n"
+alias el='printf "\n\n"'
 
 # ============================================
 # Color aliases (32 ANSI colors + modifiers)
 # ============================================
 
 # Reset everything
-export RESET="\033[0m"
+export FONTRESET="\033[0m"
+alias fontreset="printf ${FONTRESET}"
 
 # --- Standard foreground colors ---
 export FGBLACK="\033[30m"   # Black
+alias fgblack="printf ${FGBLACK}"
 export FGRED="\033[31m"     # Red
+alias fgred="printf ${FGRED}"
 export FGGREEN="\033[32m"   # Green
+alias fggreen="printf ${FGGREEN}"
 export FGYELLOW="\033[33m"  # Yellow
+alias fgyellow="printf ${FGYELLOW}"
 export FGBLUE="\033[34m"    # Blue
+alias fgblue="printf ${FGBLUE}"
 export FGMAGENTA="\033[35m" # Magenta
-export FGCYAN="\033[36m"    # Cyan
+alias fgmagenta="printf ${FGMAGENTA}"
+export FGCYAN="\033[36m"   # Cyan
+alias fgcyan="printf ${FGCYAN}"
 export FGWHITE="\033[37m"   # White
+alias fgwhite="printf ${FGWHITE}"
 
 # --- Bright foreground colors ---
 export FGGRAY="\033[90m"         # Bright Black (Gray)
+alias fggray="printf ${FGGRAY}"
 export FGBRED="\033[91m"   # Bright Red
+alias fgbred="printf ${FGBRED}"
 export FGBGREEN="\033[92m" # Bright Green
+alias fgbgreen="printf ${FGBGREEN}"
 export FGBYELLOW="\033[93m" # Bright Yellow
+alias fgbyellow="printf ${FGBYELLOW}"
 export FGBBLUE="\033[94m"  # Bright Blue
+alias fgbblue="printf ${FGBBLUE}"
 export FGBMAGENTA="\033[95m" # Bright Magenta
+alias fgbmagenta="printf ${FGBMAGENTA}"
 export FGBCYAN="\033[96m"  # Bright Cyan
+alias fgbcyan="printf ${FGBCYAN}"
 export FGBWHITE="\033[97m" # Bright White
+alias fgbwhite="printf ${FGBWHITE}"
 
 # --- Background colors (sets background, some also set fg) ---
 export BGBLACK="\033[40m"        # Black bg
+alias bgblack="printf ${BGBLACK}"
 export BGRED="\033[31;41m"      # Red fg/bg
+alias bgred="printf ${BGRED}"
 export BGGREEN="\033[32;42m"    # Green fg/bg
+alias bggreen="printf ${BGGREEN}"
 export BGYELLOW="\033[33;43m"   # Yellow fg/bg
+alias bgyellow="printf ${BGYELLOW}"
 export BGBLUE="\033[34;44m"     # Blue fg/bg
+alias bgblue="printf ${BGBLUE}"
 export BGMAGENTA="\033[35;45m"  # Magenta fg/bg
+alias bgmagenta="printf ${BGMAGENTA}"
 export BGCYAN="\033[36;46m"     # Cyan fg/bg
+alias bgcyan="printf ${BGCYAN}"
 export BGWHITE="\033[37;47m"    # White fg/bg
+alias bgwhite="printf ${BGWHITE}"
 
 # --- Bright background colors ----
 export BGBBLACK="\033[30;100m"         # Bright Black bg
+alias bgbblack="printf ${BGBBLACK}"
 export BGBRED="\033[31;101m"          # Bright Red bg
+alias bgbred="printf ${BGBRED}"
 export BGBGREEN="\033[32;102m"       # Bright Green bg
+alias bgbgreen="printf ${BGBGREEN}"
 export BGBYELLOW="\033[33;103m"      # Bright Yellow bg
+alias bgbyellow="printf ${BGBYELLOW}"
 export BGBBLUE="\033[34;104m"       # Bright Blue bg
+alias bgbblue="printf ${BGBBLUE}"
 export BGBMAGENTA="\033[35;105m"    # Bright Magenta bg
+alias bgbmagenta="printf ${BGBMAGENTA}"
 export BGBCYAN="\033[36;106m"       # Bright Cyan bg
+alias bgbcyan="printf ${BGBCYAN}"
 export BGBWHITE="\033[37;107m"      # Bright White bg
+alias bgbwhite="printf ${BGBWHITE}"
 
 # --- Highlight/status aliases for emphasis ---
 export HIGHLIGHT="\033[38;5;226;48;5;160m"  # White on bright red
+alias highlight="printf ${HIGHLIGHT}"
 export SUCCESS="\033[38;5;231;48;5;46m"    # White on bright green
+alias success="printf ${SUCCESS}"
 export WARNING="\033[38;5;16;48;5;226m"    # Dark on yellow
+alias warning="printf ${WARNING}"
 export INFO="\033[38;5;231;48;5;21m"       # White on bright blue
+alias info="printf ${INFO}"
 
 # --- Style modifiers ---
 export BOLD="\033[1m"
+alias bold="printf ${BOLD}"
 export DIM="\033[2m"
+alias dim="printf ${DIM}"
 export ITALIC="\033[3m"
+alias italic="printf ${ITALIC}"
 export UNDERLINE="\033[4m"
+alias underline="printf ${UNDERLINE}"
 export BLINK="\033[5m"
+alias blink="printf ${BLINK}"
 export STRIKETHROUGH="\033[9m"
+alias strikethrough="printf ${STRIKETHROUGH}"
 export REVERSE="\033[7m"
+alias reverse="printf ${REVERSE}"
 export HIDDEN="\033[8m"
+alias hidden="printf ${HIDDEN}"
 export BOLDOFF="\033[21m"
+alias boldoff="printf ${BOLDOFF}"
 export ITALICOFF="\033[23m"
+alias italicoff="printf ${ITALICOFF}"
 export UNDERLINEOFF="\033[24m"
+alias underlineoff="printf ${UNDERLINEOFF}"
 export REVERSEOFF="\033[27m"
+alias reverseoff="printf ${REVERSEOFF}"
 export HIDDENOFF="\033[28m"
+alias hiddenoff="printf ${HIDDENOFF}"
 export STRIKETHROUGHOFF="\033[29m"
+alias strikethroughoff="printf ${STRIKETHROUGHOFF}"
 
 # Reset everything
 export RESETFMT="\033[0m"
+alias resetfmt="printf ${RESETFMT}"

@@ -83,6 +83,43 @@ fn empty_or_comment_only_file_fails() {
 }
 
 #[test]
+fn backslash_continuation_runs_as_one_slide() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    fs::write(
+        &slides,
+        "printf '%s %s\\n' \\\nhello \\\nworld\nprintf 'second\\n'\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--slide", "1"])
+        .arg(&slides)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("hello world"))
+        .stdout(predicate::str::contains("second").not());
+}
+
+#[test]
+fn continuation_followed_by_comment_fails() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    fs::write(&slides, "printf hello \\\n# comment\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--slide", "1"])
+        .arg(&slides)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "line continuation must be followed by a command line",
+        ));
+}
+
+#[test]
 fn command_cwd_is_slide_file_directory() {
     let dir = tempdir().unwrap();
     let slides_dir = dir.path().join("deck");

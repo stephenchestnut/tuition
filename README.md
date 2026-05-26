@@ -53,7 +53,8 @@ Input files are read in order. Each slide is run when it becomes active.
 - Blank or whitespace-only lines are ignored.
 - Lines whose trimmed form starts with `#` are ignored.
 - Inline `#` characters are preserved as part of the command.
-- The original command line text is preserved.
+- If a command line ends with `\`, the next line is joined to it, with the `\` removed.
+- Continuations may span multiple command lines, but the line after `\` must be another command line, not a blank line or comment.
 
 Example:
 
@@ -62,6 +63,9 @@ Example:
 echo 'Welcome to tuition'
 
 printf '\e[31mred text\e[0m\n'
+printf '%s %s\n' \
+  long \
+  command
 python3 demo.py
 ```
 

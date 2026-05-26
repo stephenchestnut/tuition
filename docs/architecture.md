@@ -8,7 +8,9 @@
 - Blank and whitespace-only lines are ignored.
 - Lines whose trimmed form starts with `#` are ignored.
 - Inline `#` characters are preserved as part of the command.
-- Each slide stores the original command text, source file, and source line.
+- A trailing `\` joins the following command line to the current command, with the `\` removed.
+- Continuations may span multiple command lines, but a `\` followed by a blank line, comment line, or end of file is a parse error.
+- Each slide stores the command text, source file, and source line where the command begins.
 - A slide command's working directory is the directory containing its slide file.
 
 ## Execution model
