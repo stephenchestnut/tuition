@@ -13,6 +13,9 @@ alias nl='printf "\n"'
 # Empty line (newline + back to column 0)
 alias el='printf "\n\n"'
 
+# Wait for any keypress
+alias pause='read -sk'
+
 # ============================================
 # Color aliases (32 ANSI colors + modifiers)
 # ============================================
