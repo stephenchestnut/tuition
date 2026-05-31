@@ -14,7 +14,7 @@ pub struct Cli {
     #[arg(long)]
     pub slide: Option<usize>,
 
-    /// Files containing slide commands, one command per non-blank non-comment line.
+    /// Files containing slide commands, with optional backslash line continuations.
     #[arg(required = true)]
     pub files: Vec<PathBuf>,
 }
