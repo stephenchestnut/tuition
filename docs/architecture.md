@@ -29,7 +29,7 @@ If `$SHELL` is unset, `/bin/sh` is used. The generated script clears the termina
 
 Interactive presentation keeps the terminal-attached execution model described above. PDF export is a separate mode selected with `--pdf`; it does not add an output cache, captured-output UI renderer, ratatui layer, or scrolling behavior to normal presentation.
 
-In PDF export mode, each slide command is run in a PTY sized from `--pdfcols`/`--pdfrows`, the current terminal size, or the `100x30` fallback. The generated shell script clears the terminal, prepares shell-specific behavior and aliases, and runs the slide command without printing the interactive status bar. PTY output is parsed into a final terminal buffer, and that final frame is rendered as one PDF page per slide. Export mode assumes slide commands are non-interactive.
+In PDF export mode, each slide command is run in a PTY sized from `--pdfcols`/`--pdfrows`, the current terminal size, or the `100x30` fallback. The generated shell script clears the terminal, prepares shell-specific behavior and aliases, and runs the slide command without printing the interactive status bar. PTY output is parsed into a final terminal buffer, and that final frame is rendered as one PDF page per slide. ANSI foreground colors are mapped to PDF text colors. iTerm2/imgcat inline image escape sequences are decoded and embedded into the PDF. Export mode assumes slide commands are non-interactive.
 
 ## Raw mode lifecycle
 
