@@ -676,15 +676,13 @@ fn render_text_row(
         );
 
         if run_style.underline {
+            layer.set_fill_color(pdf_color(run_style.fg, style));
             draw_underline(
                 layer,
-                run_style.fg,
-                style,
-                start_col,
-                text.chars().count(),
-                y,
-                font_size,
-                cell_width_mm,
+                MARGIN_MM + start_col as f64 * cell_width_mm,
+                text.chars().count() as f64 * cell_width_mm,
+                y - font_size * PT_TO_MM * 0.18,
+                (font_size * PT_TO_MM * 0.06).max(0.15),
             );
         }
     }
@@ -710,23 +708,15 @@ fn font_for_style(fonts: &FontSet, style: TextRunStyle) -> &printpdf::IndirectFo
 
 fn draw_underline(
     layer: &printpdf::PdfLayerReference,
-    fg: VtColor,
-    style: TerminalStyle,
-    start_col: usize,
-    char_count: usize,
-    y: f64,
-    font_size: f64,
-    cell_width_mm: f64,
+    x: f64,
+    width: f64,
+    underline_y: f64,
+    thickness: f64,
 ) {
-    if char_count == 0 {
+    if width <= 0.0 {
         return;
     }
-    let x = MARGIN_MM + start_col as f64 * cell_width_mm;
-    let width = char_count as f64 * cell_width_mm;
-    let thickness = (font_size * PT_TO_MM * 0.06).max(0.15);
-    let underline_y = y - font_size * PT_TO_MM * 0.18;
 
-    layer.set_fill_color(pdf_color(fg, style));
     layer.add_rect(
         Rect::new(
             Mm(x as f32),
