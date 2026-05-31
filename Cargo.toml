@@ -15,6 +15,9 @@ categories = ["command-line-utilities"]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
+portable-pty = "0.9"
+printpdf = "0.7"
+vt100 = "0.15"
 
 [dev-dependencies]
 assert_cmd = "2"

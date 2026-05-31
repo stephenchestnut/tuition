@@ -3,6 +3,7 @@ use anyhow::{Result, anyhow};
 pub mod aliases;
 pub mod app;
 pub mod cli;
+pub mod pdf;
 pub mod shell;
 pub mod slides;
 pub mod terminal;
@@ -10,6 +11,7 @@ pub mod terminal;
 use aliases::parse_aliases_arg;
 use app::{App, run_app, run_single_slide};
 use cli::Cli;
+use pdf::export_pdf;
 use shell::ShellCommandRunner;
 use slides::parse_slide_files;
 use terminal::{CrosstermTerminal, cleanup_terminal};
@@ -20,7 +22,13 @@ pub fn run(cli: Cli) -> Result<()> {
         return Err(anyhow!("no slide commands found"));
     }
 
-    let mut app = App::new(commands, parse_aliases_arg(cli.aliases.as_deref())?);
+    let aliases = parse_aliases_arg(cli.aliases.as_deref())?;
+
+    if let Some(output) = cli.pdf.as_deref() {
+        return export_pdf(&commands, &aliases, output, cli.pdfcols, cli.pdfrows);
+    }
+
+    let mut app = App::new(commands, aliases);
     let mut terminal = CrosstermTerminal;
     let mut runner = ShellCommandRunner;
 

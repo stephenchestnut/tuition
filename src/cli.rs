@@ -14,6 +14,18 @@ pub struct Cli {
     #[arg(long)]
     pub slide: Option<usize>,
 
+    /// Export the presentation to a PDF file instead of presenting interactively.
+    #[arg(long, value_name = "FILE", conflicts_with = "slide")]
+    pub pdf: Option<PathBuf>,
+
+    /// Terminal columns to use for PDF export.
+    #[arg(long, value_name = "COLS", default_value_t = 0)]
+    pub pdfcols: u16,
+
+    /// Terminal rows to use for PDF export.
+    #[arg(long, value_name = "ROWS", default_value_t = 0)]
+    pub pdfrows: u16,
+
     /// Files containing slide commands, with optional backslash line continuations.
     #[arg(required = true)]
     pub files: Vec<PathBuf>,

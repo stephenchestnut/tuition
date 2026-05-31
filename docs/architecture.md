@@ -25,6 +25,12 @@ $SHELL -lc '<generated script>'
 
 If `$SHELL` is unset, `/bin/sh` is used. The generated script clears the terminal, prepares shell-specific behavior and aliases, prints the status bar, then runs the slide command.
 
+## PDF export
+
+Interactive presentation keeps the terminal-attached execution model described above. PDF export is a separate mode selected with `--pdf`; it does not add an output cache, captured-output UI renderer, ratatui layer, or scrolling behavior to normal presentation.
+
+In PDF export mode, each slide command is run in a PTY sized from `--pdfcols`/`--pdfrows`, the current terminal size, or the `100x30` fallback. The generated shell script clears the terminal, prepares shell-specific behavior and aliases, and runs the slide command without printing the interactive status bar. PTY output is parsed into a final terminal buffer, and that final frame is rendered as one PDF page per slide. Export mode assumes slide commands are non-interactive.
+
 ## Raw mode lifecycle
 
 Raw mode is enabled only while reading navigation keys. It is disabled before running slide commands or opening a temporary shell, and cleanup also attempts to disable raw mode before exit.
@@ -48,7 +54,8 @@ The `s` key launches the user's shell with a `(TUITION)` prompt. Bash, zsh, and 
 - `cli.rs`: clap command-line types.
 - `slides.rs`: slide parsing and slide cwd resolution.
 - `aliases.rs`: alias argument parsing, upward lookup, and alias function generation.
-- `shell.rs`: shell detection, shell quoting, slide script generation, and temporary shell launching/config generation.
+- `shell.rs`: shell detection, shell quoting, slide script generation, PDF slide script generation, and temporary shell launching/config generation.
+- `pdf.rs`: PTY-backed PDF export and final terminal-buffer rendering.
 - `terminal.rs`: raw mode/key reading/status output abstraction and crossterm implementation.
 - `app.rs`: app state, navigation, status bar, and deterministic app loop.
 - `lib.rs`: top-level entrypoint and module wiring.
