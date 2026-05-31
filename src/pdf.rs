@@ -10,8 +10,8 @@ use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use printpdf::{
-    BuiltinFont, Color as PdfColor, Image, ImageTransform, Mm, PdfDocument, Rgb,
-    image_crate::GenericImageView,
+    BuiltinFont, Color as PdfColor, Image, ImageTransform, Mm, PdfDocument, Rgb as PdfRgb,
+    image_crate::{DynamicImage, GenericImageView, RgbImage},
 };
 use vt100::Color as VtColor;
 
@@ -153,7 +153,13 @@ fn render_slide(
         .map_err(|_| anyhow!("PDF export PTY reader thread panicked"))?
         .context("failed reading PDF export PTY output")?;
 
-    Ok(process_terminal_output(&bytes, cols, rows))
+    let mut rendered = process_terminal_output(&bytes, cols, rows);
+    if rendered.images.is_empty() {
+        rendered
+            .images
+            .extend(fallback_imgcat_images(slide, &rendered.rows));
+    }
+    Ok(rendered)
 }
 
 fn process_terminal_output(bytes: &[u8], cols: u16, rows: u16) -> RenderedSlide {
@@ -285,6 +291,124 @@ fn rendered_cells(parser: &vt100::Parser, cols: u16, rows: u16) -> Vec<Vec<Rende
         .collect()
 }
 
+fn fallback_imgcat_images(slide: &SlideCommand, rows: &[Vec<RenderedCell>]) -> Vec<RenderedImage> {
+    let tokens = shell_like_tokens(&slide.command);
+    let Some(imgcat_pos) = tokens
+        .iter()
+        .position(|token| token == "imgcat" || token.rsplit('/').next() == Some("imgcat"))
+    else {
+        return Vec::new();
+    };
+
+    let mut requested_width_px = None;
+    let mut path = None;
+    let mut idx = imgcat_pos + 1;
+    while idx < tokens.len() {
+        let token = &tokens[idx];
+        if token == ";" || token == "&&" || token == "||" || token == "printf" {
+            break;
+        }
+        if token == "-W" || token == "--width" {
+            requested_width_px = tokens
+                .get(idx + 1)
+                .and_then(|width| parse_width_token(width));
+            idx += 2;
+            continue;
+        }
+        if let Some(width) = token.strip_prefix("-W") {
+            requested_width_px = parse_width_token(width);
+            idx += 1;
+            continue;
+        }
+        if token.starts_with('-') {
+            idx += 1;
+            continue;
+        }
+        path = Some(token.clone());
+        break;
+    }
+
+    let Some(path) = path else {
+        return Vec::new();
+    };
+    let path = slide_command_cwd(slide).join(path);
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+
+    vec![RenderedImage {
+        row: fallback_image_row(rows),
+        col: 0,
+        bytes,
+        requested_width_px,
+    }]
+}
+
+fn fallback_image_row(rows: &[Vec<RenderedCell>]) -> u16 {
+    rows.iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, row)| row.is_empty())
+        .map(|(idx, _)| idx as u16)
+        .unwrap_or(1)
+}
+
+fn parse_width_token(width: &str) -> Option<u32> {
+    width.strip_suffix("px").unwrap_or(width).parse().ok()
+}
+
+fn shell_like_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut token = String::new();
+    let mut chars = command.chars().peekable();
+    let mut quote = None;
+
+    while let Some(ch) = chars.next() {
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            } else {
+                token.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            ';' => {
+                if !token.is_empty() {
+                    tokens.push(std::mem::take(&mut token));
+                }
+                tokens.push(";".to_string());
+            }
+            '&' if chars.peek() == Some(&'&') => {
+                chars.next();
+                if !token.is_empty() {
+                    tokens.push(std::mem::take(&mut token));
+                }
+                tokens.push("&&".to_string());
+            }
+            '|' if chars.peek() == Some(&'|') => {
+                chars.next();
+                if !token.is_empty() {
+                    tokens.push(std::mem::take(&mut token));
+                }
+                tokens.push("||".to_string());
+            }
+            ch if ch.is_whitespace() => {
+                if !token.is_empty() {
+                    tokens.push(std::mem::take(&mut token));
+                }
+            }
+            _ => token.push(ch),
+        }
+    }
+    if !token.is_empty() {
+        tokens.push(token);
+    }
+    tokens
+}
+
 fn write_pdf(slides: &[RenderedSlide], output: &Path, cols: u16, rows: u16) -> Result<()> {
     let (doc, first_page, first_layer) = PdfDocument::new(
         "tuition export",
@@ -388,6 +512,7 @@ fn add_image_to_layer(
     let image = printpdf::image_crate::load_from_memory(&rendered.bytes)
         .context("failed to decode terminal image for PDF export")?;
     let (width_px, height_px) = image.dimensions();
+    let image = flatten_alpha_on_white(image);
     let default_width_mm = f64::from(width_px) / 300.0 * 25.4;
     let requested_width_mm = rendered
         .requested_width_px
@@ -420,6 +545,27 @@ fn add_image_to_layer(
     Ok(())
 }
 
+fn flatten_alpha_on_white(image: DynamicImage) -> DynamicImage {
+    let rgba = image.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut rgb = RgbImage::new(width, height);
+
+    for (x, y, pixel) in rgba.enumerate_pixels() {
+        let [r, g, b, a] = pixel.0;
+        let alpha = u16::from(a);
+        let blend = |channel: u8| -> u8 {
+            ((u16::from(channel) * alpha + 255 * (255 - alpha)) / 255) as u8
+        };
+        rgb.put_pixel(
+            x,
+            y,
+            printpdf::image_crate::Rgb([blend(r), blend(g), blend(b)]),
+        );
+    }
+
+    DynamicImage::ImageRgb8(rgb)
+}
+
 fn effective_fg(cell: &RenderedCell) -> VtColor {
     if cell.inverse {
         if cell.bg == VtColor::Default {
@@ -443,7 +589,7 @@ fn pdf_color(color: VtColor) -> PdfColor {
         VtColor::Rgb(r, g, b) => (r, g, b),
         VtColor::Idx(idx) => ansi_color(idx),
     };
-    PdfColor::Rgb(Rgb::new(
+    PdfColor::Rgb(PdfRgb::new(
         f32::from(r) / 255.0,
         f32::from(g) / 255.0,
         f32::from(b) / 255.0,
@@ -540,5 +686,25 @@ mod tests {
         assert_eq!(slide.images.len(), 1);
         assert_eq!(slide.images[0].bytes, b"hi");
         assert_eq!(slide.images[0].requested_width_px, Some(10));
+    }
+
+    #[test]
+    fn tokenizes_imgcat_command_for_fallback() {
+        assert_eq!(
+            shell_like_tokens("printf 'x y'; imgcat -W 500px -s ../logo.png; printf done"),
+            vec![
+                "printf",
+                "x y",
+                ";",
+                "imgcat",
+                "-W",
+                "500px",
+                "-s",
+                "../logo.png",
+                ";",
+                "printf",
+                "done",
+            ]
+        );
     }
 }
