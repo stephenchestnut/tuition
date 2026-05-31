@@ -1,17 +1,19 @@
 use std::{
     env,
-    fs::File,
-    io::{BufWriter, Read},
+    fs::{File, OpenOptions},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
     thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use printpdf::{
-    BuiltinFont, Color as PdfColor, Image, ImageTransform, Mm, PdfDocument, Rgb as PdfRgb,
+    BuiltinFont, Color as PdfColor, Image, ImageTransform, Mm, PdfDocument, Rect, Rgb as PdfRgb,
     image_crate::{DynamicImage, GenericImageView, RgbImage},
+    path::PaintMode,
 };
 use vt100::Color as VtColor;
 
@@ -28,6 +30,21 @@ const MARGIN_MM: f64 = 12.0;
 const PT_TO_MM: f64 = 0.352_777_778;
 const PX_TO_MM: f64 = 25.4 / 96.0;
 const MAX_IMAGE_WIDTH_MM: f64 = 90.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TerminalStyle {
+    default_fg: (u8, u8, u8),
+    default_bg: (u8, u8, u8),
+}
+
+impl Default for TerminalStyle {
+    fn default() -> Self {
+        Self {
+            default_fg: (0, 0, 0),
+            default_bg: (255, 255, 255),
+        }
+    }
+}
 
 #[derive(Debug)]
 struct RenderedSlide {
@@ -75,18 +92,25 @@ pub fn export_pdf(
     output: &Path,
     requested_cols: u16,
     requested_rows: u16,
+    capture_terminal_style: bool,
 ) -> Result<()> {
     let (cols, rows) = pdf_terminal_size(requested_cols, requested_rows);
     if cols == 0 || rows == 0 {
         return Err(anyhow!("PDF terminal dimensions must be non-zero"));
     }
 
+    let style = if capture_terminal_style {
+        capture_calling_terminal_style().unwrap_or_default()
+    } else {
+        TerminalStyle::default()
+    };
+
     let mut rendered = Vec::with_capacity(slides.len());
     for slide in slides {
         rendered.push(render_slide(slide, aliases, cols, rows)?);
     }
 
-    write_pdf(&rendered, output, cols, rows)
+    write_pdf(&rendered, output, cols, rows, style)
 }
 
 pub fn pdf_terminal_size(requested_cols: u16, requested_rows: u16) -> (u16, u16) {
@@ -109,6 +133,102 @@ pub fn pdf_terminal_size(requested_cols: u16, requested_rows: u16) -> (u16, u16)
             requested_rows
         },
     )
+}
+
+#[cfg(unix)]
+fn capture_calling_terminal_style() -> Option<TerminalStyle> {
+    use std::os::fd::AsRawFd;
+
+    let mut tty = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .ok()?;
+    let fd = tty.as_raw_fd();
+
+    let mut original = std::mem::MaybeUninit::<libc::termios>::uninit();
+    if unsafe { libc::tcgetattr(fd, original.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let original = unsafe { original.assume_init() };
+    let mut raw = original;
+    raw.c_lflag &= !(libc::ICANON | libc::ECHO);
+    raw.c_cc[libc::VMIN] = 0;
+    raw.c_cc[libc::VTIME] = 1;
+    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
+        return None;
+    }
+
+    let result = (|| {
+        tty.write_all(b"\x1b]10;?\x07\x1b]11;?\x07").ok()?;
+        tty.flush().ok()?;
+
+        let deadline = Instant::now() + Duration::from_millis(250);
+        let mut response = Vec::new();
+        let mut buf = [0_u8; 256];
+        while Instant::now() < deadline {
+            match tty.read(&mut buf) {
+                Ok(0) => thread::sleep(Duration::from_millis(10)),
+                Ok(n) => {
+                    response.extend_from_slice(&buf[..n]);
+                    if parse_terminal_style_response(&response).is_some() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        parse_terminal_style_response(&response)
+    })();
+
+    let _ = unsafe { libc::tcsetattr(fd, libc::TCSANOW, &original) };
+    result
+}
+
+#[cfg(not(unix))]
+fn capture_calling_terminal_style() -> Option<TerminalStyle> {
+    None
+}
+
+fn parse_terminal_style_response(bytes: &[u8]) -> Option<TerminalStyle> {
+    let text = String::from_utf8_lossy(bytes);
+    let default_fg = parse_osc_color(&text, "10")?;
+    let default_bg = parse_osc_color(&text, "11")?;
+    Some(TerminalStyle {
+        default_fg,
+        default_bg,
+    })
+}
+
+fn parse_osc_color(text: &str, selector: &str) -> Option<(u8, u8, u8)> {
+    let needle = format!("]{};", selector);
+    let start = text.find(&needle)? + needle.len();
+    let color = text[start..]
+        .split(['\x07', '\x1b'])
+        .next()
+        .unwrap_or_default();
+    parse_xterm_rgb(color)
+}
+
+fn parse_xterm_rgb(color: &str) -> Option<(u8, u8, u8)> {
+    let rgb = color
+        .strip_prefix("rgb:")
+        .or_else(|| color.strip_prefix("rgba:"))?;
+    let mut parts = rgb.split('/');
+    let r = parse_xterm_rgb_component(parts.next()?)?;
+    let g = parse_xterm_rgb_component(parts.next()?)?;
+    let b = parse_xterm_rgb_component(parts.next()?)?;
+    Some((r, g, b))
+}
+
+fn parse_xterm_rgb_component(component: &str) -> Option<u8> {
+    let digits = component.len().min(4);
+    if digits == 0 {
+        return None;
+    }
+    let value = u32::from_str_radix(&component[..digits], 16).ok()?;
+    let max = (1_u32 << (digits * 4)) - 1;
+    Some(((value * 255 + max / 2) / max) as u8)
 }
 
 fn render_slide(
@@ -418,7 +538,13 @@ fn shell_like_tokens(command: &str) -> Vec<String> {
     tokens
 }
 
-fn write_pdf(slides: &[RenderedSlide], output: &Path, cols: u16, rows: u16) -> Result<()> {
+fn write_pdf(
+    slides: &[RenderedSlide],
+    output: &Path,
+    cols: u16,
+    rows: u16,
+    style: TerminalStyle,
+) -> Result<()> {
     let (doc, first_page, first_layer) = PdfDocument::new(
         "tuition export",
         Mm(PAGE_WIDTH_MM as f32),
@@ -440,6 +566,7 @@ fn write_pdf(slides: &[RenderedSlide], output: &Path, cols: u16, rows: u16) -> R
             )
         };
         let layer = doc.get_page(page).get_layer(layer);
+        paint_page_background(&layer, style);
         let font_size = font_size_for_grid(cols, rows);
         let cell_width_mm = font_size * 0.6 * PT_TO_MM;
         let line_height_mm = font_size * 1.2 * PT_TO_MM;
@@ -457,7 +584,7 @@ fn write_pdf(slides: &[RenderedSlide], output: &Path, cols: u16, rows: u16) -> R
             if y < MARGIN_MM / 2.0 {
                 break;
             }
-            render_text_row(&layer, cells, y, font_size, cell_width_mm, &font);
+            render_text_row(&layer, cells, y, font_size, cell_width_mm, &font, style);
         }
     }
 
@@ -467,6 +594,19 @@ fn write_pdf(slides: &[RenderedSlide], output: &Path, cols: u16, rows: u16) -> R
         .with_context(|| format!("failed to write PDF output {}", output.display()))
 }
 
+fn paint_page_background(layer: &printpdf::PdfLayerReference, style: TerminalStyle) {
+    layer.set_fill_color(pdf_rgb_color(style.default_bg));
+    layer.add_rect(
+        Rect::new(
+            Mm(0.0),
+            Mm(0.0),
+            Mm(PAGE_WIDTH_MM as f32),
+            Mm(PAGE_HEIGHT_MM as f32),
+        )
+        .with_mode(PaintMode::Fill),
+    );
+}
+
 fn render_text_row(
     layer: &printpdf::PdfLayerReference,
     cells: &[RenderedCell],
@@ -474,6 +614,7 @@ fn render_text_row(
     font_size: f64,
     cell_width_mm: f64,
     font: &printpdf::IndirectFontRef,
+    style: TerminalStyle,
 ) {
     let mut col = 0;
     while col < cells.len() {
@@ -483,10 +624,10 @@ fn render_text_row(
             continue;
         }
 
-        let fg = effective_fg(first);
+        let fg = effective_fg(first, style);
         let mut text = String::new();
         let start_col = col;
-        while col < cells.len() && effective_fg(&cells[col]) == fg {
+        while col < cells.len() && effective_fg(&cells[col], style) == fg {
             text.push_str(&cells[col].text);
             col += 1;
         }
@@ -494,7 +635,7 @@ fn render_text_row(
         if text.trim_end().is_empty() {
             continue;
         }
-        layer.set_fill_color(pdf_color(fg));
+        layer.set_fill_color(pdf_color(fg, style));
         layer.use_text(
             text.trim_end(),
             font_size as f32,
@@ -608,10 +749,10 @@ fn flatten_alpha_on_white(image: DynamicImage) -> DynamicImage {
     DynamicImage::ImageRgb8(rgb)
 }
 
-fn effective_fg(cell: &RenderedCell) -> VtColor {
+fn effective_fg(cell: &RenderedCell, style: TerminalStyle) -> VtColor {
     if cell.inverse {
         if cell.bg == VtColor::Default {
-            VtColor::Idx(0)
+            VtColor::Rgb(style.default_bg.0, style.default_bg.1, style.default_bg.2)
         } else {
             cell.bg
         }
@@ -625,12 +766,16 @@ fn effective_fg(cell: &RenderedCell) -> VtColor {
     }
 }
 
-fn pdf_color(color: VtColor) -> PdfColor {
+fn pdf_color(color: VtColor, style: TerminalStyle) -> PdfColor {
     let (r, g, b) = match color {
-        VtColor::Default => (0, 0, 0),
+        VtColor::Default => style.default_fg,
         VtColor::Rgb(r, g, b) => (r, g, b),
         VtColor::Idx(idx) => ansi_color(idx),
     };
+    pdf_rgb_color((r, g, b))
+}
+
+fn pdf_rgb_color((r, g, b): (u8, u8, u8)) -> PdfColor {
     PdfColor::Rgb(PdfRgb::new(
         f32::from(r) / 255.0,
         f32::from(g) / 255.0,
@@ -712,7 +857,28 @@ mod tests {
             inverse: false,
         };
 
-        assert_eq!(effective_fg(&cell), VtColor::Idx(14));
+        assert_eq!(
+            effective_fg(&cell, TerminalStyle::default()),
+            VtColor::Idx(14)
+        );
+    }
+
+    #[test]
+    fn parses_terminal_style_response() {
+        let response = b"\x1b]10;rgb:eeee/eeee/eeee\x07\x1b]11;rgb:1111/2222/3333\x07";
+
+        assert_eq!(
+            parse_terminal_style_response(response),
+            Some(TerminalStyle {
+                default_fg: (238, 238, 238),
+                default_bg: (17, 34, 51),
+            })
+        );
+    }
+
+    #[test]
+    fn parses_short_xterm_rgb_components() {
+        assert_eq!(parse_xterm_rgb("rgb:f/8/0"), Some((255, 136, 0)));
     }
 
     #[test]

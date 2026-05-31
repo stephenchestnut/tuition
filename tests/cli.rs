@@ -231,6 +231,25 @@ fn pdf_export_accepts_dimensions() {
 }
 
 #[test]
+fn pdf_export_accepts_capture_terminal_style() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    let output = dir.path().join("deck.pdf");
+    fs::write(&slides, "printf 'styled\\n'\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--pdf"])
+        .arg(&output)
+        .args(["--capture-terminal-style"])
+        .arg(&slides)
+        .assert()
+        .success();
+
+    assert!(fs::metadata(&output).unwrap().len() > 0);
+}
+
+#[test]
 fn pdf_export_loads_aliases() {
     let dir = tempdir().unwrap();
     let aliases = dir.path().join("aliases");

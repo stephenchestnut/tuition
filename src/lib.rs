@@ -25,7 +25,14 @@ pub fn run(cli: Cli) -> Result<()> {
     let aliases = parse_aliases_arg(cli.aliases.as_deref())?;
 
     if let Some(output) = cli.pdf.as_deref() {
-        return export_pdf(&commands, &aliases, output, cli.pdfcols, cli.pdfrows);
+        return export_pdf(
+            &commands,
+            &aliases,
+            output,
+            cli.pdfcols,
+            cli.pdfrows,
+            cli.capture_terminal_style,
+        );
     }
 
     let mut app = App::new(commands, aliases);

@@ -26,6 +26,10 @@ pub struct Cli {
     #[arg(long, value_name = "ROWS", default_value_t = 0)]
     pub pdfrows: u16,
 
+    /// Query the calling terminal and use its default text/background colors for PDF export.
+    #[arg(long, requires = "pdf")]
+    pub capture_terminal_style: bool,
+
     /// Files containing slide commands, with optional backslash line continuations.
     #[arg(required = true)]
     pub files: Vec<PathBuf>,
