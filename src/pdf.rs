@@ -53,6 +53,15 @@ struct RenderedImage {
 }
 
 #[derive(Debug)]
+struct LayoutImage<'a> {
+    image: &'a RenderedImage,
+    width_mm: f64,
+    height_mm: f64,
+    extra_space_mm: f64,
+    prior_extra_space_mm: f64,
+}
+
+#[derive(Debug)]
 struct PendingImage {
     row: u16,
     col: u16,
@@ -435,25 +444,20 @@ fn write_pdf(slides: &[RenderedSlide], output: &Path, cols: u16, rows: u16) -> R
         let cell_width_mm = font_size * 0.6 * PT_TO_MM;
         let line_height_mm = font_size * 1.2 * PT_TO_MM;
         let start_y = PAGE_HEIGHT_MM - MARGIN_MM - font_size * PT_TO_MM;
+        let layout_images = layout_images(&slide.images, line_height_mm);
 
-        for image in &slide.images {
+        for image in &layout_images {
             add_image_to_layer(&layer, image, cell_width_mm, line_height_mm)?;
         }
 
         for (row, cells) in slide.rows.iter().enumerate() {
-            let y = start_y - row as f64 * line_height_mm;
+            let y = start_y
+                - row as f64 * line_height_mm
+                - extra_image_space_before_row(&layout_images, row as u16);
             if y < MARGIN_MM / 2.0 {
                 break;
             }
-            render_text_row(
-                &layer,
-                cells,
-                row,
-                font_size,
-                cell_width_mm,
-                line_height_mm,
-                &font,
-            );
+            render_text_row(&layer, cells, y, font_size, cell_width_mm, &font);
         }
     }
 
@@ -466,13 +470,11 @@ fn write_pdf(slides: &[RenderedSlide], output: &Path, cols: u16, rows: u16) -> R
 fn render_text_row(
     layer: &printpdf::PdfLayerReference,
     cells: &[RenderedCell],
-    row: usize,
+    y: f64,
     font_size: f64,
     cell_width_mm: f64,
-    line_height_mm: f64,
     font: &printpdf::IndirectFontRef,
 ) {
-    let y = PAGE_HEIGHT_MM - MARGIN_MM - font_size * PT_TO_MM - row as f64 * line_height_mm;
     let mut col = 0;
     while col < cells.len() {
         let first = &cells[col];
@@ -503,31 +505,71 @@ fn render_text_row(
     }
 }
 
-fn add_image_to_layer(
-    layer: &printpdf::PdfLayerReference,
-    rendered: &RenderedImage,
-    cell_width_mm: f64,
-    line_height_mm: f64,
-) -> Result<()> {
-    let image = printpdf::image_crate::load_from_memory(&rendered.bytes)
-        .context("failed to decode terminal image for PDF export")?;
+fn layout_images(images: &[RenderedImage], line_height_mm: f64) -> Vec<LayoutImage<'_>> {
+    let mut layout = Vec::new();
+    let mut prior_extra_space_mm = 0.0;
+
+    for image in images {
+        let Some((width_mm, height_mm)) = image_pdf_size(image) else {
+            continue;
+        };
+        let extra_space_mm = (height_mm - line_height_mm).max(0.0);
+        layout.push(LayoutImage {
+            image,
+            width_mm,
+            height_mm,
+            extra_space_mm,
+            prior_extra_space_mm,
+        });
+        prior_extra_space_mm += extra_space_mm;
+    }
+
+    layout
+}
+
+fn extra_image_space_before_row(images: &[LayoutImage<'_>], row: u16) -> f64 {
+    images
+        .iter()
+        .filter(|image| image.image.row < row)
+        .map(|image| image.extra_space_mm)
+        .sum()
+}
+
+fn image_pdf_size(rendered: &RenderedImage) -> Option<(f64, f64)> {
+    let image = printpdf::image_crate::load_from_memory(&rendered.bytes).ok()?;
     let (width_px, height_px) = image.dimensions();
-    let image = flatten_alpha_on_white(image);
     let default_width_mm = f64::from(width_px) / 300.0 * 25.4;
     let requested_width_mm = rendered
         .requested_width_px
         .map(|width| f64::from(width) * PX_TO_MM)
         .unwrap_or(default_width_mm);
-    let available_width_mm =
-        PAGE_WIDTH_MM - MARGIN_MM * 2.0 - f64::from(rendered.col) * cell_width_mm;
+    let available_width_mm = PAGE_WIDTH_MM - MARGIN_MM * 2.0;
     let width_mm = requested_width_mm
         .min(MAX_IMAGE_WIDTH_MM)
         .min(available_width_mm)
         .max(1.0);
     let height_mm = width_mm * f64::from(height_px) / f64::from(width_px);
+    Some((width_mm, height_mm))
+}
+
+fn add_image_to_layer(
+    layer: &printpdf::PdfLayerReference,
+    layout: &LayoutImage<'_>,
+    cell_width_mm: f64,
+    line_height_mm: f64,
+) -> Result<()> {
+    let rendered = layout.image;
+    let image = printpdf::image_crate::load_from_memory(&rendered.bytes)
+        .context("failed to decode terminal image for PDF export")?;
+    let (width_px, height_px) = image.dimensions();
+    let image = flatten_alpha_on_white(image);
+    let default_width_mm = f64::from(width_px) / 300.0 * 25.4;
     let default_height_mm = f64::from(height_px) / 300.0 * 25.4;
-    let top_y = PAGE_HEIGHT_MM - MARGIN_MM - f64::from(rendered.row) * line_height_mm;
-    let bottom_y = (top_y - height_mm).max(MARGIN_MM);
+    let top_y = PAGE_HEIGHT_MM
+        - MARGIN_MM
+        - f64::from(rendered.row) * line_height_mm
+        - layout.prior_extra_space_mm;
+    let bottom_y = (top_y - layout.height_mm).max(MARGIN_MM);
 
     Image::from_dynamic_image(&image).add_to_layer(
         layer.clone(),
@@ -536,8 +578,8 @@ fn add_image_to_layer(
                 (MARGIN_MM + f64::from(rendered.col) * cell_width_mm) as f32
             )),
             translate_y: Some(Mm(bottom_y as f32)),
-            scale_x: Some((width_mm / default_width_mm) as f32),
-            scale_y: Some((height_mm / default_height_mm) as f32),
+            scale_x: Some((layout.width_mm / default_width_mm) as f32),
+            scale_y: Some((layout.height_mm / default_height_mm) as f32),
             dpi: Some(300.0),
             ..ImageTransform::default()
         },
