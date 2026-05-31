@@ -94,6 +94,16 @@ Load alias files explicitly:
 tuition --aliases './aliases;./more-aliases' slides.txt
 ```
 
+Export a deck to PDF:
+
+```sh
+tuition --pdf deck.pdf slides.txt
+tuition --pdf deck.pdf --pdfcols 120 --pdfrows 40 slides.txt
+tuition --pdf deck.pdf --capture-terminal-style slides.txt
+```
+
+`--pdf` creates one PDF page per slide from the final terminal screen after each command exits, including ANSI foreground colors and iTerm2/imgcat inline images. It cannot be used with `--slide`. PDF export assumes non-interactive commands. `--pdfcols` and `--pdfrows` control the export terminal size; omitted dimensions use the current terminal size, or `100x30` if size detection fails. By default, PDF export uses black text on a white background; add `--capture-terminal-style` to query the calling terminal's default foreground/background colors and use those instead, falling back to the defaults if the terminal does not respond.
+
 ## Execution behavior
 
 - Commands run via `$SHELL -lc`, falling back to `/bin/sh` when `$SHELL` is unset.
@@ -132,6 +142,7 @@ read -p 'Press enter inside this slide command...'
 tuition slides.txt
 tuition --slide 2 slides.txt
 tuition --aliases './aliases' slides.txt
+tuition --pdf deck.pdf slides.txt
 ```
 
 ## Agent skill

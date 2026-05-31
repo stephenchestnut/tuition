@@ -13,8 +13,13 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1"
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
+libc = "0.2"
+portable-pty = "0.9"
+printpdf = { version = "0.7", features = ["embedded_images"] }
+vt100 = "0.15"
 
 [dev-dependencies]
 assert_cmd = "2"

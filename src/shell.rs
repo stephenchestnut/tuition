@@ -82,6 +82,28 @@ pub fn slide_shell_script(
     script
 }
 
+pub fn slide_pdf_script(
+    slide: &SlideCommand,
+    shell_name: Option<&str>,
+    aliases_paths: &[PathBuf],
+) -> String {
+    let mut script = String::from("clear\n");
+
+    // zsh does not split unquoted scalar expansions by default, but the slide
+    // files are written as shell snippets and expect POSIX-style word splitting
+    // (for example: `for name in $row`).
+    if matches!(shell_name, Some("zsh")) {
+        script.push_str("emulate -L sh\n");
+    }
+
+    if let Some(prelude) = aliases_prelude(shell_name, aliases_paths, &slide_command_cwd(slide)) {
+        script.push_str(&prelude);
+    }
+
+    script.push_str(&slide.command);
+    script
+}
+
 pub fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -242,6 +264,43 @@ mod tests {
             slide_shell_script(&slide, "status", Some("bash"), &[]),
             "clear\nprintf '%s\\n\\n\\n' 'status'\nprintf hello"
         );
+    }
+
+    #[test]
+    fn slide_pdf_script_starts_with_clear() {
+        let slide = test_slide("printf hello");
+
+        assert_eq!(
+            slide_pdf_script(&slide, Some("bash"), &[]),
+            "clear\nprintf hello"
+        );
+    }
+
+    #[test]
+    fn slide_pdf_script_omits_status_and_navigation_text() {
+        let slide = test_slide("echo command");
+        let script = slide_pdf_script(&slide, Some("sh"), &[]);
+
+        assert!(!script.contains("STATUS"));
+        assert!(!script.contains("(r)erun"));
+        assert!(script.contains("echo command"));
+    }
+
+    #[test]
+    fn slide_pdf_zsh_scripts_include_emulate_sh() {
+        let slide = test_slide("echo hi");
+        let script = slide_pdf_script(&slide, Some("zsh"), &[]);
+
+        assert!(script.contains("emulate -L sh\n"));
+    }
+
+    #[test]
+    fn slide_pdf_script_includes_aliases() {
+        let slide = test_slide("ll");
+        let script = slide_pdf_script(&slide, Some("bash"), &[PathBuf::from("/tmp/aliases")]);
+
+        assert!(script.contains("shopt -s expand_aliases"));
+        assert!(script.contains("/tmp/aliases"));
     }
 
     #[test]

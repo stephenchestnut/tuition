@@ -154,3 +154,119 @@ fn multiple_input_files_preserve_slide_order() {
         .stdout(predicate::str::contains("two"))
         .stdout(predicate::str::contains("one").not());
 }
+
+#[test]
+fn pdf_export_creates_pdf() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    let output = dir.path().join("deck.pdf");
+    fs::write(&slides, "printf 'hello pdf\\n'\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--pdf"])
+        .arg(&output)
+        .arg(&slides)
+        .assert()
+        .success();
+
+    let bytes = fs::read(&output).unwrap();
+    assert!(bytes.starts_with(b"%PDF"));
+    assert!(!bytes.is_empty());
+}
+
+#[test]
+fn pdf_export_accepts_multiple_slides() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    let output = dir.path().join("deck.pdf");
+    fs::write(&slides, "printf 'one\\n'\nprintf 'two\\n'\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--pdf"])
+        .arg(&output)
+        .arg(&slides)
+        .assert()
+        .success();
+
+    assert!(fs::metadata(&output).unwrap().len() > 0);
+}
+
+#[test]
+fn pdf_conflicts_with_slide() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    let output = dir.path().join("deck.pdf");
+    fs::write(&slides, "printf 'hello\\n'\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--pdf"])
+        .arg(&output)
+        .args(["--slide", "1"])
+        .arg(&slides)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn pdf_export_accepts_dimensions() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    let output = dir.path().join("deck.pdf");
+    fs::write(&slides, "printf 'sized\\n'\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--pdf"])
+        .arg(&output)
+        .args(["--pdfcols", "80", "--pdfrows", "24"])
+        .arg(&slides)
+        .assert()
+        .success();
+
+    assert!(fs::metadata(&output).unwrap().len() > 0);
+}
+
+#[test]
+fn pdf_export_accepts_capture_terminal_style() {
+    let dir = tempdir().unwrap();
+    let slides = dir.path().join("slides.txt");
+    let output = dir.path().join("deck.pdf");
+    fs::write(&slides, "printf 'styled\\n'\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--pdf"])
+        .arg(&output)
+        .args(["--capture-terminal-style"])
+        .arg(&slides)
+        .assert()
+        .success();
+
+    assert!(fs::metadata(&output).unwrap().len() > 0);
+}
+
+#[test]
+fn pdf_export_loads_aliases() {
+    let dir = tempdir().unwrap();
+    let aliases = dir.path().join("aliases");
+    let slides = dir.path().join("slides.txt");
+    let output = dir.path().join("deck.pdf");
+    fs::write(&aliases, "alias hi='printf alias-ok\\n'\n").unwrap();
+    fs::write(&slides, "hi\n").unwrap();
+
+    Command::cargo_bin("tuition")
+        .unwrap()
+        .args(["--aliases"])
+        .arg(&aliases)
+        .args(["--pdf"])
+        .arg(&output)
+        .arg(&slides)
+        .assert()
+        .success();
+
+    assert!(fs::metadata(&output).unwrap().len() > 0);
+}
