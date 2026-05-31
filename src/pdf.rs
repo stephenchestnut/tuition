@@ -58,6 +58,8 @@ struct RenderedCell {
     fg: VtColor,
     bg: VtColor,
     bold: bool,
+    italic: bool,
+    underline: bool,
     inverse: bool,
 }
 
@@ -84,6 +86,21 @@ struct PendingImage {
     col: u16,
     data: String,
     requested_width_px: Option<u32>,
+}
+
+struct FontSet {
+    regular: printpdf::IndirectFontRef,
+    bold: printpdf::IndirectFontRef,
+    italic: printpdf::IndirectFontRef,
+    bold_italic: printpdf::IndirectFontRef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextRunStyle {
+    fg: VtColor,
+    bold: bool,
+    italic: bool,
+    underline: bool,
 }
 
 pub fn export_pdf(
@@ -409,6 +426,8 @@ fn rendered_cells(parser: &vt100::Parser, cols: u16, rows: u16) -> Vec<Vec<Rende
                     fg: cell.fgcolor(),
                     bg: cell.bgcolor(),
                     bold: cell.bold(),
+                    italic: cell.italic(),
+                    underline: cell.underline(),
                     inverse: cell.inverse(),
                 });
             }
@@ -551,9 +570,20 @@ fn write_pdf(
         Mm(PAGE_HEIGHT_MM as f32),
         "Slide 1",
     );
-    let font = doc
-        .add_builtin_font(BuiltinFont::Courier)
-        .context("failed to load built-in PDF font")?;
+    let fonts = FontSet {
+        regular: doc
+            .add_builtin_font(BuiltinFont::Courier)
+            .context("failed to load built-in PDF font")?,
+        bold: doc
+            .add_builtin_font(BuiltinFont::CourierBold)
+            .context("failed to load built-in PDF bold font")?,
+        italic: doc
+            .add_builtin_font(BuiltinFont::CourierOblique)
+            .context("failed to load built-in PDF italic font")?,
+        bold_italic: doc
+            .add_builtin_font(BuiltinFont::CourierBoldOblique)
+            .context("failed to load built-in PDF bold italic font")?,
+    };
 
     for (idx, slide) in slides.iter().enumerate() {
         let (page, layer) = if idx == 0 {
@@ -584,7 +614,7 @@ fn write_pdf(
             if y < MARGIN_MM / 2.0 {
                 break;
             }
-            render_text_row(&layer, cells, y, font_size, cell_width_mm, &font, style);
+            render_text_row(&layer, cells, y, font_size, cell_width_mm, &fonts, style);
         }
     }
 
@@ -613,7 +643,7 @@ fn render_text_row(
     y: f64,
     font_size: f64,
     cell_width_mm: f64,
-    font: &printpdf::IndirectFontRef,
+    fonts: &FontSet,
     style: TerminalStyle,
 ) {
     let mut col = 0;
@@ -624,26 +654,88 @@ fn render_text_row(
             continue;
         }
 
-        let fg = effective_fg(first, style);
+        let run_style = text_run_style(first, style);
         let mut text = String::new();
         let start_col = col;
-        while col < cells.len() && effective_fg(&cells[col], style) == fg {
+        while col < cells.len() && text_run_style(&cells[col], style) == run_style {
             text.push_str(&cells[col].text);
             col += 1;
         }
 
-        if text.trim_end().is_empty() {
+        let text = text.trim_end();
+        if text.is_empty() {
             continue;
         }
-        layer.set_fill_color(pdf_color(fg, style));
+        layer.set_fill_color(pdf_color(run_style.fg, style));
         layer.use_text(
-            text.trim_end(),
+            text,
             font_size as f32,
             Mm((MARGIN_MM + start_col as f64 * cell_width_mm) as f32),
             Mm(y as f32),
-            font,
+            font_for_style(fonts, run_style),
         );
+
+        if run_style.underline {
+            draw_underline(
+                layer,
+                run_style.fg,
+                style,
+                start_col,
+                text.chars().count(),
+                y,
+                font_size,
+                cell_width_mm,
+            );
+        }
     }
+}
+
+fn text_run_style(cell: &RenderedCell, style: TerminalStyle) -> TextRunStyle {
+    TextRunStyle {
+        fg: effective_fg(cell, style),
+        bold: cell.bold,
+        italic: cell.italic,
+        underline: cell.underline,
+    }
+}
+
+fn font_for_style(fonts: &FontSet, style: TextRunStyle) -> &printpdf::IndirectFontRef {
+    match (style.bold, style.italic) {
+        (true, true) => &fonts.bold_italic,
+        (true, false) => &fonts.bold,
+        (false, true) => &fonts.italic,
+        (false, false) => &fonts.regular,
+    }
+}
+
+fn draw_underline(
+    layer: &printpdf::PdfLayerReference,
+    fg: VtColor,
+    style: TerminalStyle,
+    start_col: usize,
+    char_count: usize,
+    y: f64,
+    font_size: f64,
+    cell_width_mm: f64,
+) {
+    if char_count == 0 {
+        return;
+    }
+    let x = MARGIN_MM + start_col as f64 * cell_width_mm;
+    let width = char_count as f64 * cell_width_mm;
+    let thickness = (font_size * PT_TO_MM * 0.06).max(0.15);
+    let underline_y = y - font_size * PT_TO_MM * 0.18;
+
+    layer.set_fill_color(pdf_color(fg, style));
+    layer.add_rect(
+        Rect::new(
+            Mm(x as f32),
+            Mm(underline_y as f32),
+            Mm((x + width) as f32),
+            Mm((underline_y + thickness) as f32),
+        )
+        .with_mode(PaintMode::Fill),
+    );
 }
 
 fn layout_images(images: &[RenderedImage], line_height_mm: f64) -> Vec<LayoutImage<'_>> {
@@ -854,6 +946,8 @@ mod tests {
             fg: VtColor::Idx(6),
             bg: VtColor::Default,
             bold: true,
+            italic: false,
+            underline: false,
             inverse: false,
         };
 
@@ -879,6 +973,21 @@ mod tests {
     #[test]
     fn parses_short_xterm_rgb_components() {
         assert_eq!(parse_xterm_rgb("rgb:f/8/0"), Some((255, 136, 0)));
+    }
+
+    #[test]
+    fn captures_text_styles_from_terminal_output() {
+        let slide = process_terminal_output(
+            b"\x1b[1mbold\x1b[0m \x1b[3mitalic\x1b[0m \x1b[4munder\x1b[0m",
+            80,
+            24,
+        );
+        let row = &slide.rows[0];
+
+        assert!(row[0].bold);
+        assert!(!row[5].bold);
+        assert!(row[5].italic);
+        assert!(row[12].underline);
     }
 
     #[test]
