@@ -6,7 +6,10 @@
 
 `tuition` is a tiny command-driven terminal slide presenter. Your slide deck is just a text file where each slide is a shell command.
 
-Slide commands run directly attached to your terminal, so normal terminal output, interactive programs, ANSI control sequences, and terminal image protocols all work as normal.
+Slide commands run directly attached to your terminal, so normal terminal output, interactive programs, ANSI control sequences, and terminal image protocols all work as you expect.
+
+> [!WARNING]
+> This application is entirely vibe coded and I have done zero manual quality control checks on the code.
 
 ## Quick start
 
@@ -25,6 +28,9 @@ cargo run -- --aliases ./aliases examples/colors.txt
 ```
 
 Use `l`, right arrow, or space to advance; use `h` or left arrow to go back; press `q` to quit.
+
+> [!IMPORTANT]
+> The text interface does not transfer 1-1 to a screen for presentation.  Changes in resolution can affect the line length and induce line wrap in your slides, and colors that look good in your terminal window may not show up well on a projector. It is best to try out the screen beforehand to spot any problems with your slides or use `--pdf filename.pdf` to export the deck.
 
 ## Installation / build
 
