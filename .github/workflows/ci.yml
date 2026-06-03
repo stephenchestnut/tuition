@@ -17,12 +17,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Install real shells (Ubuntu)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bash zsh fish
+      - name: Install real shells (macOS)
+        if: runner.os == 'macOS'
+        run: brew install fish
       - name: Check formatting
         run: cargo fmt --check
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Test
         run: cargo test
+        env:
+          TUITION_REQUIRE_E2E_SHELLS: "1"
 
   coverage:
     name: coverage

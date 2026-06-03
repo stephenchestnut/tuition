@@ -322,6 +322,14 @@ mod tests {
     }
 
     #[test]
+    fn shell_name_handles_common_paths_and_login_shell_names() {
+        assert_eq!(shell_name("/bin/bash").as_deref(), Some("bash"));
+        assert_eq!(shell_name("/usr/local/bin/zsh").as_deref(), Some("zsh"));
+        assert_eq!(shell_name("-bash").as_deref(), Some("bash"));
+        assert_eq!(shell_name("fish").as_deref(), Some("fish"));
+    }
+
+    #[test]
     fn zsh_scripts_include_emulate_sh() {
         let slide = test_slide("echo hi");
         let script = slide_shell_script(&slide, "status", Some("zsh"), &[]);
@@ -377,7 +385,7 @@ mod tests {
     fn fish_config_loads_aliases() {
         let path = PathBuf::from("/tmp/tuition-test-aliases");
         fs::write(&path, "alias hi='echo hi'\n").unwrap();
-        let contents = fish_prompt_config_contents(&[path.clone()]);
+        let contents = fish_prompt_config_contents(std::slice::from_ref(&path));
         let _ = fs::remove_file(path);
 
         assert!(contents.contains("function hi"));

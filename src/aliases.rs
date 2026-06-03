@@ -88,6 +88,9 @@ pub fn aliases_function_definitions(path: &Path) -> String {
         }
 
         let body = strip_matching_quotes(value.trim());
+        defs.push_str("unalias ");
+        defs.push_str(name);
+        defs.push_str(" 2>/dev/null || true\n");
         defs.push_str(name);
         defs.push_str("() { ");
         defs.push_str(body);
@@ -114,7 +117,7 @@ pub fn fish_aliases_definitions(path: &Path) -> String {
                 defs.push_str(name);
                 defs.push(' ');
                 defs.push_str(&shell_single_quote(posix_assignment_value(value.trim())));
-                defs.push_str("\n");
+                defs.push('\n');
             }
             continue;
         }
