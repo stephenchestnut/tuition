@@ -8,7 +8,7 @@ use std::{
 use anyhow::Result;
 
 use crate::{
-    aliases::{aliases_prelude, effective_aliases_paths},
+    aliases::{aliases_prelude, effective_aliases_paths, fish_aliases_definitions},
     app::CommandRunner,
     slides::{SlideCommand, slide_command_cwd},
 };
@@ -119,7 +119,7 @@ pub fn run_prompted_shell(
     match shell_name(shell).as_deref() {
         Some("bash") => run_bash_with_tuition_prompt(shell, &aliases),
         Some("zsh") => run_zsh_with_tuition_prompt(shell, &aliases),
-        Some("fish") => run_fish_with_tuition_prompt(shell),
+        Some("fish") => run_fish_with_tuition_prompt(shell, &aliases),
         _ => Command::new(shell)
             .env("PS1", "(TUITION) ")
             .env("PROMPT", "(TUITION) ")
@@ -173,11 +173,17 @@ fn run_zsh_with_tuition_prompt(
     result
 }
 
-fn run_fish_with_tuition_prompt(shell: &str) -> io::Result<std::process::ExitStatus> {
+fn run_fish_with_tuition_prompt(
+    shell: &str,
+    aliases_paths: &[PathBuf],
+) -> io::Result<std::process::ExitStatus> {
     let config_home = temporary_prompt_path("fish");
     let fish_dir = config_home.join("fish");
     fs::create_dir_all(&fish_dir)?;
-    fs::write(fish_dir.join("config.fish"), fish_prompt_config_contents())?;
+    fs::write(
+        fish_dir.join("config.fish"),
+        fish_prompt_config_contents(aliases_paths),
+    )?;
     let original_config = env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"))
@@ -233,15 +239,22 @@ fi
     contents
 }
 
-pub fn fish_prompt_config_contents() -> String {
-    r#"if test -r "$TUITION_ORIGINAL_FISH_CONFIG"
+pub fn fish_prompt_config_contents(aliases_paths: &[PathBuf]) -> String {
+    let mut contents = r#"if test -r "$TUITION_ORIGINAL_FISH_CONFIG"
   source "$TUITION_ORIGINAL_FISH_CONFIG"
 end
-function fish_prompt
+"#
+    .to_string();
+    for aliases_path in aliases_paths {
+        contents.push_str(&fish_aliases_definitions(aliases_path));
+    }
+    contents.push_str(
+        r#"function fish_prompt
   echo -n '(TUITION) '
 end
-"#
-    .to_string()
+"#,
+    );
+    contents
 }
 
 fn temporary_prompt_path(kind: &str) -> PathBuf {
@@ -354,10 +367,20 @@ mod tests {
 
     #[test]
     fn fish_defines_tuition_prompt() {
-        let contents = fish_prompt_config_contents();
+        let contents = fish_prompt_config_contents(&[]);
 
         assert!(contents.contains("function fish_prompt"));
         assert!(contents.contains("(TUITION)"));
+    }
+
+    #[test]
+    fn fish_config_loads_aliases() {
+        let path = PathBuf::from("/tmp/tuition-test-aliases");
+        fs::write(&path, "alias hi='echo hi'\n").unwrap();
+        let contents = fish_prompt_config_contents(&[path.clone()]);
+        let _ = fs::remove_file(path);
+
+        assert!(contents.contains("function hi"));
     }
 
     fn test_slide(command: &str) -> SlideCommand {

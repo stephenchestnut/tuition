@@ -34,6 +34,14 @@ pub fn aliases_prelude(
 ) -> Option<String> {
     let aliases = effective_aliases_paths(aliases_paths, start_dir)?;
 
+    if matches!(shell_name, Some("fish")) {
+        let mut prelude = String::new();
+        for aliases_path in aliases {
+            prelude.push_str(&fish_aliases_definitions(&aliases_path));
+        }
+        return Some(prelude);
+    }
+
     let mut prelude = String::new();
     if matches!(shell_name, Some("bash")) {
         prelude.push_str("shopt -s expand_aliases\n");
@@ -88,6 +96,50 @@ pub fn aliases_function_definitions(path: &Path) -> String {
     defs
 }
 
+pub fn fish_aliases_definitions(path: &Path) -> String {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return String::new();
+    };
+
+    let mut defs = String::new();
+    for line in contents.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("export ") {
+            let Some((name, value)) = rest.split_once('=') else {
+                continue;
+            };
+            let name = name.trim();
+            if is_shell_name(name) {
+                defs.push_str("set -gx ");
+                defs.push_str(name);
+                defs.push(' ');
+                defs.push_str(&shell_single_quote(posix_assignment_value(value.trim())));
+                defs.push_str("\n");
+            }
+            continue;
+        }
+
+        let Some(rest) = trimmed.strip_prefix("alias ") else {
+            continue;
+        };
+        let Some((name, value)) = rest.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if name.is_empty() || !is_shell_name(name) {
+            continue;
+        }
+
+        let body = translate_posix_vars(strip_matching_quotes(value.trim()));
+        defs.push_str("function ");
+        defs.push_str(name);
+        defs.push_str("\n  ");
+        defs.push_str(&body);
+        defs.push_str("\nend\n");
+    }
+    defs
+}
+
 fn strip_matching_quotes(s: &str) -> &str {
     if s.len() >= 2 {
         let bytes = s.as_bytes();
@@ -98,6 +150,39 @@ fn strip_matching_quotes(s: &str) -> &str {
         }
     }
     s
+}
+
+fn posix_assignment_value(value: &str) -> &str {
+    let value = value.trim();
+    let Some(quote) = value.as_bytes().first().copied() else {
+        return value.split_whitespace().next().unwrap_or("");
+    };
+    if quote != b'\'' && quote != b'\"' {
+        return value.split_whitespace().next().unwrap_or("");
+    }
+    value[1..]
+        .find(quote as char)
+        .map(|end| &value[1..end + 1])
+        .unwrap_or(value)
+}
+
+fn translate_posix_vars(s: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let name = &after[..end];
+        out.push('$');
+        out.push_str(name);
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn is_shell_name(name: &str) -> bool {
@@ -197,6 +282,27 @@ mod tests {
         let missing = unique_temp_path("missing-aliases");
 
         assert_eq!(aliases_function_definitions(&missing), "");
+    }
+
+    #[test]
+    fn fish_aliases_convert_exports_and_aliases() {
+        let path = temp_file(
+            "aliases",
+            "export FGRED=\"\\033[31m\"   # Red\nalias fgred=\"printf ${FGRED}\"\n",
+        );
+
+        let defs = fish_aliases_definitions(&path);
+        assert!(defs.contains("set -gx FGRED '\\033[31m'"));
+        assert!(defs.contains("function fgred\n  printf $FGRED\nend"));
+    }
+
+    #[test]
+    fn fish_alias_prelude_uses_fish_syntax() {
+        let path = temp_file("aliases", "alias hi='echo hi'\n");
+
+        let prelude = aliases_prelude(Some("fish"), &[path], Path::new(".")).unwrap();
+        assert!(prelude.contains("function hi"));
+        assert!(!prelude.contains("if [ -r"));
     }
 
     #[test]
