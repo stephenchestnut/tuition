@@ -163,6 +163,12 @@ fn run_zsh_with_tuition_prompt(
     let mut command = Command::new(shell);
     command
         .env("ZDOTDIR", &zdotdir)
+        // Debian/Ubuntu's global zshrc runs compinit by default. In CI (and on
+        // some systems) that can prompt about insecure completion directories
+        // before our temporary zshrc has a chance to set the tuition prompt.
+        // The global zshrc honors this variable, and the user's original zshrc
+        // is still sourced by zsh_prompt_zshrc_contents below.
+        .env("skip_global_compinit", "1")
         .env("PS1", "(TUITION) ")
         .env("PROMPT", "(TUITION) ");
     if let Ok(original_zdotdir) = env::var("ZDOTDIR") {
